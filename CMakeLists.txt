@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 # ============================================================================
-# YOUR_GAME_NAME - Static Recompilation
+# Blinx 2 - Static Recompilation
 #
 # Copy this template to your game project root and customize:
 #   1. Change the project name below
@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.20)
 #   4. Add any game-specific compile definitions or link libraries
 # ============================================================================
 
-project(your_game_recomp C)
+project(blinx_2_recomp C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)

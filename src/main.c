@@ -1,5 +1,5 @@
 /**
- * YOUR_GAME_NAME - Recompiled Game Entry Point
+ * Blinx 2 - Recompiled Game Entry Point
  *
  * This is the Windows executable that hosts the recompiled game code.
  * It performs the following initialization sequence:
@@ -14,9 +14,9 @@
  * 8. Call the game's original entry point (recompiled)
  *
  * Customize this file for your game:
- *   - Set YOUR_GAME_ENTRY_POINT to the XBE entry point address
- *   - Set YOUR_GAME_XBE_PATH to where the XBE file lives
- *   - Set YOUR_GAME_DIR to the game data directory
+ *   - Set BLINX_2_ENTRY_POINT to the XBE entry point address
+ *   - Set BLINX_2_XBE_PATH to where the XBE file lives
+ *   - Set BLINX_2_DIR to the game data directory
  *   - Add any CRT global pre-initialization your game needs
  *   - Customize the VEH handler for game-specific crash diagnosis
  *
@@ -81,9 +81,9 @@ extern ptrdiff_t g_xbox_mem_offset;
  * TODO: Set these from your xbe_parser output.
  * Run: py -3 -m tools.xbe_parser game/default.xbe
  */
-#define YOUR_GAME_ENTRY_POINT   0x0029A1DA  /* XBE entry point VA */
-#define YOUR_GAME_XBE_PATH      "E:\\Blinx2project\\game_files\\default.xbe"
-#define YOUR_GAME_DIR            "E:\\Blinx2project\\game_files"
+#define BLINX_2_ENTRY_POINT   0x0029A1DA  /* XBE entry point VA */
+#define BLINX_2_XBE_PATH      "E:\\Blinx2project\\game_files\\default.xbe"
+#define BLINX_2_DIR            "E:\\Blinx2project\\game_files"
 
 /* ── Forward declarations ──────────────────────────────────── */
 
@@ -319,7 +319,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    printf("=== YOUR_GAME_NAME - Static Recompilation ===\n");
+    printf("=== Blinx 2 - Static Recompilation ===\n");
     printf("Loading XBE...\n");
 
     /* Install VEH handler (first handler in chain) */
@@ -331,7 +331,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     AddVectoredExceptionHandler(1, veh_handler);
 
     /* Step 1: Load XBE */
-    if (!load_xbe(YOUR_GAME_XBE_PATH, &xbe_data, &xbe_size)) {
+    if (!load_xbe(BLINX_2_XBE_PATH, &xbe_data, &xbe_size)) {
         MessageBoxA(NULL, "Failed to load default.xbe.\n"
                     "Place the game files in the 'game' subdirectory.",
                     "Recomp", MB_ICONERROR);
@@ -372,7 +372,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 4: Set game directory for file I/O path translation */
     {
         extern void xbox_path_init(const char *game_dir, const char *save_dir);
-        xbox_path_init(YOUR_GAME_DIR, NULL);
+        xbox_path_init(BLINX_2_DIR, NULL);
     }
 
     /* Step 5: Initialize kernel bridge (thunk table in Xbox memory) */
@@ -397,7 +397,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      */
 
     printf("\n=== Initialization complete ===\n");
-    printf("Entry point: 0x%08X\n", YOUR_GAME_ENTRY_POINT);
+    printf("Entry point: 0x%08X\n", BLINX_2_ENTRY_POINT);
     printf("ESP: 0x%08X\n", g_esp);
 
     /* Build the flat dispatch table before the guest runs.
