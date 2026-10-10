@@ -274,6 +274,98 @@ static DWORD WINAPI memdump_main(LPVOID param)
     }
 }
 
+/* DirectSound's GP-DSP command doorbell, acked from the guest's own pointers.
+ *
+ * Audio init (sub_0021C8B0) calls DirectSoundCreate(.., &g_pDS = 0xEC4C0C, ..)
+ * and then downloads media\se\dsp.bin. In the download, sub_003341BE (under the
+ * DSOUND lock 0x00339ADC) writes command 3 to scratch+0x810 and spins until
+ * the GP DSP clears it. The runtime's GP DSP is a passthrough stub, so the
+ * word never clears and the main thread hangs holding the lock.
+ *
+ * This used to default RECOMP_DSP_ACK to a fixed 0x803D0810, but the scratch
+ * is a contiguous allocation and moves whenever anything allocates before it.
+ * With D3D lifted in full it moved to 0x80A20810 and the hang came back. So
+ * follow the same chain DirectSound does:
+ *   doorbell = [[[[[[0xEC4C0C]+0x4]+0x14]+0x8]+0x10]] + 0x810
+ * and clear the word whenever it is non-zero. The chain was found from a hang
+ * dump: the spinning frame's `this` (0x80A44134) is stored at [g_pDS+4]+0x14.
+ * The +0xC path that reading the call chain suggested reaches a different
+ * object whose [this+8] is 0. This is a handshake ack, not a
+ * DSP: anything DirectSound reads back from the GP stays wrong. An explicit
+ * RECOMP_DSP_ACK hands the job back to the runtime and turns this off. */
+static int guest_ptr_ok(uint32_t va)
+{
+    return (va >= 0x00010000u && va < 0x04000000u)
+        || (va >= 0x80000000u && va < 0x84000000u);
+}
+
+static DWORD WINAPI dsp_doorbell_main(LPVOID unused)
+{
+    static const uint32_t chain[] = { 0x04, 0x14, 0x08, 0x10, 0x00 };
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t last = 0;
+    unsigned acks = 0;
+    uint32_t last_root = 0;
+    (void)unused;
+
+    fprintf(stderr, "[DSP] doorbell watcher running (mem=%p)\n", (void *)mem);
+    for (;;) {
+        uint32_t p = *(volatile const uint32_t *)(mem + 0x00EC4C0Cu);
+        size_t i;
+        if (p != last_root) {               /* log each new chain once */
+            uint32_t q = p;
+            fprintf(stderr, "[DSP] chain root 0x%08X", q);
+            for (i = 0; i < sizeof(chain) / sizeof(chain[0]) && guest_ptr_ok(q); i++) {
+                q = *(volatile const uint32_t *)(mem + q + chain[i]);
+                fprintf(stderr, " -> 0x%08X", q);
+            }
+            fprintf(stderr, "\n");
+            last_root = p;
+        }
+        Sleep(10);
+        for (i = 0; i < sizeof(chain) / sizeof(chain[0]) && guest_ptr_ok(p); i++)
+            p = *(volatile const uint32_t *)(mem + p + chain[i]);
+        if (i < sizeof(chain) / sizeof(chain[0]) || !guest_ptr_ok(p)) {
+            static size_t shown_i = (size_t)-1;
+            static uint32_t shown_p;
+            if (p && (i != shown_i || p != shown_p)) {
+                fprintf(stderr, "[DSP] doorbell chain stops at step %u: 0x%08X\n",
+                        (unsigned)i, p);
+                shown_i = i;
+                shown_p = p;
+            }
+            continue;                       /* DirectSound not up yet */
+        }
+        p += 0x810;
+        if (p != last) {
+            fprintf(stderr, "[DSP] DirectSound doorbell at 0x%08X\n", p);
+            last = p;
+        }
+        if (*(volatile uint32_t *)(uintptr_t)(mem + p)) {
+            *(volatile uint32_t *)(uintptr_t)(mem + p) = 0;
+            if (++acks <= 3)
+                fprintf(stderr, "[DSP] doorbell command acknowledged\n");
+        }
+    }
+}
+
+static void dsp_doorbell_start(void)
+{
+    if (getenv("RECOMP_DSP_ACK"))
+        return;
+    CloseHandle(CreateThread(NULL, 0, dsp_doorbell_main, NULL, 0, NULL));
+}
+
+/* Keeps a fully buffered stderr live; see WinMain. */
+static DWORD WINAPI stderr_flusher(LPVOID unused)
+{
+    (void)unused;
+    for (;;) {
+        Sleep(500);
+        fflush(stderr);
+    }
+}
+
 static void memdump_start(void)
 {
     const char *e = getenv("RECOMP_MEMDUMP_SECS");
@@ -494,19 +586,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     (void)lpCmdLine;
     (void)nCmdShow;
 
-    /* Unbuffered output for immediate visibility during debugging */
+    /* stdout unbuffered; stderr fully buffered, flushed every 500 ms.
+     *
+     * stderr used to be unbuffered, so every log line was its own WriteFile.
+     * A sampler run put ~75% of the main thread's time in ZwWriteFile under
+     * fprintf. On bad runs a redirected log managed ~4 lines a second, and the
+     * boot didn't reach audio init in 25 minutes (the .rec scan alone logs
+     * ~1,500 lines). One write per 1 MB or per 500 ms fixes that. The crash
+     * handler and the watchdog both fflush(stderr) before exiting, so the
+     * dumps that matter are not lost. RECOMP_STDERR_UNBUFFERED=1 restores
+     * line-at-a-time output for a crash that kills the process outright. */
     setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
+    if (getenv("RECOMP_STDERR_UNBUFFERED"))
+        setvbuf(stderr, NULL, _IONBF, 0);
+    else {
+        setvbuf(stderr, NULL, _IOFBF, 1 << 20);
+        CloseHandle(CreateThread(NULL, 0, stderr_flusher, NULL, 0, NULL));
+    }
 
-    /* DirectSound's GP-DSP command doorbell for this title. sub_003341BE
-     * (under the DSOUND lock 0x00339ADC) writes 3 to scratch+0x810 and spins
-     * until the DSP clears it; the GP DSP is a passthrough stub, so the
-     * runtime's DSP-ack tick has to. The address is stable across runs (taken
-     * from the watchdog's ebx). Only matters with RECOMP_AC97_READY=1; an
-     * explicit RECOMP_DSP_ACK overrides it. See
-     * notes/audio-spin-fix.md. */
-    if (!getenv("RECOMP_DSP_ACK"))
-        _putenv_s("RECOMP_DSP_ACK", "0x803D0810");
+    /* The DirectSound GP-DSP doorbell is acked by a thread started later, once
+     * guest memory exists; see dsp_doorbell_start(). */
 
     printf("=== Blinx 2 - Static Recompilation ===\n");
     printf("Loading XBE...\n");
@@ -615,6 +714,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     xbox_WatchdogStart();
     sampler_start();
     memdump_start();
+    dsp_doorbell_start();
 
     /* Step 7: Call the recompiled entry point */
     printf("\nStarting game...\n");
