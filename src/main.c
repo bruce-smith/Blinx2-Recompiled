@@ -128,6 +128,126 @@ extern void xbe_entry_point(void);
  *
  * Requires linking dbghelp and keeping the .pdb beside the .exe.
  */
+/* RECOMP_SAMPLE_MS=<n>: host-RIP sampler on the guest main thread.
+ *
+ * Every n ms the main thread is suspended, its host stack unwound (x64 unwind
+ * data needs no PDB) and each frame's function counted: "self" for the
+ * innermost frame, "incl" once per sample for every frame. A report of both,
+ * named through the PDB (link with /DEBUG), goes to stderr every 30 s. This is
+ * how a compute-bound stretch (the boot's .rec scan) is attributed to guest
+ * functions without regenerating with --trace-functions.
+ *
+ * Nothing that can take a lock runs while the target is suspended: no stdio,
+ * no heap -- only the unwinder and a static table. */
+#define SAMPLE_SLOTS 8192
+static struct { DWORD64 fn; unsigned long self, incl; } s_samples[SAMPLE_SLOTS];
+static HANDLE s_sample_target;
+
+static unsigned long *sample_slot(DWORD64 fn, int self)
+{
+    unsigned i = (unsigned)((fn >> 4) * 2654435761u) & (SAMPLE_SLOTS - 1), n;
+    for (n = 0; n < SAMPLE_SLOTS; n++, i = (i + 1) & (SAMPLE_SLOTS - 1)) {
+        if (s_samples[i].fn == fn || !s_samples[i].fn) {
+            s_samples[i].fn = fn;
+            return self ? &s_samples[i].self : &s_samples[i].incl;
+        }
+    }
+    return NULL;
+}
+
+static void sample_report(unsigned long total)
+{
+    static int order[SAMPLE_SLOTS];
+    char buf[sizeof(SYMBOL_INFO) + 256];
+    SYMBOL_INFO *sym = (SYMBOL_INFO *)buf;
+    int pass, n = 0, i, j;
+
+    for (i = 0; i < SAMPLE_SLOTS; i++)
+        if (s_samples[i].fn) order[n++] = i;
+    for (pass = 0; pass < 2; pass++) {
+        fprintf(stderr, "[SAMPLE] %lu samples, top by %s:\n", total,
+                pass ? "inclusive" : "self");
+        for (i = 0; i < 30 && i < n; i++) {          /* partial selection sort */
+            int best = i;
+            for (j = i + 1; j < n; j++) {
+                unsigned long a = pass ? s_samples[order[j]].incl : s_samples[order[j]].self;
+                unsigned long b = pass ? s_samples[order[best]].incl : s_samples[order[best]].self;
+                if (a > b) best = j;
+            }
+            { int t = order[i]; order[i] = order[best]; order[best] = t; }
+            {
+                DWORD64 disp = 0, fn = s_samples[order[i]].fn;
+                unsigned long c = pass ? s_samples[order[i]].incl : s_samples[order[i]].self;
+                if (!c) break;
+                memset(buf, 0, sizeof(buf));
+                sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+                sym->MaxNameLen = 255;
+                fprintf(stderr, "  %8lu %5.1f%%  %s\n", c, 100.0 * c / total,
+                        SymFromAddr(GetCurrentProcess(), fn, &disp, sym)
+                            ? sym->Name : "?");
+            }
+        }
+    }
+    fflush(stderr);
+}
+
+static DWORD WINAPI sampler_main(LPVOID param)
+{
+    DWORD ms = (DWORD)(uintptr_t)param, last = GetTickCount();
+    unsigned long total = 0;
+
+    for (;;) {
+        CONTEXT ctx;
+        DWORD64 seen[16];
+        int nseen = 0, d, k;
+
+        Sleep(ms);
+        if (SuspendThread(s_sample_target) == (DWORD)-1)
+            return 0;
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(s_sample_target, &ctx)) {
+            for (d = 0; d < 16 && ctx.Rip; d++) {
+                DWORD64 base = 0, fn;
+                PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(ctx.Rip, &base, NULL);
+                unsigned long *c;
+                if (!rf) {                  /* leaf: return address at [rsp] */
+                    fn = ctx.Rip;
+                    ctx.Rip = *(DWORD64 *)ctx.Rsp;
+                    ctx.Rsp += 8;
+                } else {
+                    void *hd; DWORD64 ef;
+                    fn = base + rf->BeginAddress;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, rf,
+                                     &ctx, &hd, &ef, NULL);
+                }
+                if (d == 0 && (c = sample_slot(fn, 1))) (*c)++;
+                for (k = 0; k < nseen && seen[k] != fn; k++) ;
+                if (k == nseen) {
+                    seen[nseen++] = fn;
+                    if ((c = sample_slot(fn, 0))) (*c)++;
+                }
+            }
+            total++;
+        }
+        ResumeThread(s_sample_target);
+        if (GetTickCount() - last >= 30000) {
+            last = GetTickCount();
+            sample_report(total);
+        }
+    }
+}
+
+static void sampler_start(void)
+{
+    const char *e = getenv("RECOMP_SAMPLE_MS");
+    if (!e || atoi(e) <= 0) return;
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(),
+                    &s_sample_target, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    CreateThread(NULL, 0, sampler_main, (LPVOID)(uintptr_t)atoi(e), 0, NULL);
+    fprintf(stderr, "[SAMPLE] sampling the guest main thread every %d ms\n", atoi(e));
+}
+
 static void print_guest_context(void *rip)
 {
     /* SYMBOL_INFO is variable-length: the name is written past the struct, so
@@ -286,13 +406,38 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
          *   fprintf(stderr, "  Game state: %u\n", state);
          */
 
-        /* Print native stack return addresses for debugging */
+        /* Native call chain, unwound from the fault context and named through
+         * the PDB. (This used to filter raw stack words to 0x14xxxxxxx, the
+         * non-ASLR image base, so under ASLR it never printed a frame.) The
+         * thread id and fs base say *which* thread faulted: guest code also
+         * runs on DPC, interrupt and APU threads, not just the game's own. */
         {
-            uintptr_t *sp = (uintptr_t *)ep->ContextRecord->Rsp;
-            fprintf(stderr, "  Native stack (first 8 return addrs):\n");
-            for (int i = 0; i < 64 && sp[i]; i++) {
-                if (sp[i] >= 0x140000000ULL && sp[i] < 0x150000000ULL) {
-                    fprintf(stderr, "    [%d] 0x%llX\n", i, (unsigned long long)sp[i]);
+            CONTEXT ctx = *ep->ContextRecord;
+            char sbuf[sizeof(SYMBOL_INFO) + 256];
+            SYMBOL_INFO *sym = (SYMBOL_INFO *)sbuf;
+            int d;
+
+            fprintf(stderr, "  host thread %lu, g_fs_base=0x%08X\n",
+                    GetCurrentThreadId(), g_fs_base);
+            fprintf(stderr, "  Native stack:\n");
+            for (d = 0; d < 24 && ctx.Rip; d++) {
+                DWORD64 base = 0, disp = 0;
+                PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(ctx.Rip, &base, NULL);
+                memset(sbuf, 0, sizeof(sbuf));
+                sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+                sym->MaxNameLen = 255;
+                fprintf(stderr, "    [%2d] 0x%llX %s+0x%llX\n", d,
+                        (unsigned long long)ctx.Rip,
+                        SymFromAddr(GetCurrentProcess(), ctx.Rip, &disp, sym)
+                            ? sym->Name : "?",
+                        (unsigned long long)disp);
+                if (!rf) {
+                    ctx.Rip = *(DWORD64 *)ctx.Rsp;
+                    ctx.Rsp += 8;
+                } else {
+                    void *hd; DWORD64 ef;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, rf,
+                                     &ctx, &hd, &ef, NULL);
                 }
             }
         }
@@ -434,6 +579,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * silently inert, and the one diagnostic that tells a hang from slowness
      * does nothing while appearing to be set. */
     xbox_WatchdogStart();
+    sampler_start();
 
     /* Step 7: Call the recompiled entry point */
     printf("\nStarting game...\n");

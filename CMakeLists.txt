@@ -94,6 +94,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 if(MSVC)
     target_link_options(${PROJECT_NAME} PRIVATE
         /LARGEADDRESSAWARE
+        # Public-symbol PDB (relink only, no /Zi needed) so the VEH crash dump
+        # and the RECOMP_SAMPLE_MS sampler can name sub_XXXXXXXX frames.
+        /DEBUG
     )
     # The generated code files can be very large. Increase object file section limit.
     target_compile_options(${PROJECT_NAME} PRIVATE /bigobj)
