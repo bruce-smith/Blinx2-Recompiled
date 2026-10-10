@@ -356,6 +356,56 @@ static void dsp_doorbell_start(void)
     CloseHandle(CreateThread(NULL, 0, dsp_doorbell_main, NULL, 0, NULL));
 }
 
+/* "GPU always idle": a WORKAROUND, like the DSP doorbell ack above.
+ *
+ * D3D tracks GPU progress with fence times kept in its device (pointer at
+ * 0x2F1FB8). [dev+0x2C] is the CPU's next fence time, advanced by 2 per
+ * fence. [[dev+0x30]] is the last time the GPU completed, which on hardware
+ * the GPU writes back from a semaphore release in the pushbuffer. D3D calls
+ * the GPU idle when gpu + 2 == cpu (sub_002E7E80). sub_002E8110 waits,
+ * retrying KeWaitForSingleObject, until the GPU passes the fence it wants.
+ * Nothing here executes the pushbuffer by default, so the GPU time never moved
+ * and the first frame waited forever (ordinal 159 x364M).
+ *
+ * So report every fence as completed: gpu = cpu - 2. sub_002E7E80 also spins
+ * until NV2A register 0x400B10 (bits 2-6) agrees with gpu << 2; the runtime's
+ * aperture is plain RAM, so echo that too. Nothing is drawn by this. It only
+ * lets the title stop waiting for a GPU that does not exist yet.
+ * RECOMP_GPU_IDLE_SHIM=0 turns it off (e.g. with RECOMP_PB_EXEC). */
+static DWORD WINAPI gpu_idle_main(LPVOID unused)
+{
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    unsigned announced = 0;
+    (void)unused;
+
+    for (;;) {
+        uint32_t dev, gp, cpu, gpu;
+        Sleep(1);
+        dev = *(volatile const uint32_t *)(mem + 0x002F1FB8u);
+        if (!guest_ptr_ok(dev))
+            continue;
+        gp = *(volatile const uint32_t *)(mem + dev + 0x30);
+        if (!guest_ptr_ok(gp))
+            continue;
+        cpu = *(volatile const uint32_t *)(mem + dev + 0x2C);
+        gpu = cpu - 2;
+        if (*(volatile uint32_t *)(uintptr_t)(mem + gp) != gpu)
+            *(volatile uint32_t *)(uintptr_t)(mem + gp) = gpu;
+        *(volatile uint32_t *)(uintptr_t)(mem + 0xFD400B10u) = (gpu << 2) & 0x7C;
+        if (!announced++)
+            fprintf(stderr, "[GPU] idle shim: device 0x%08X, fence at 0x%08X "
+                            "(workaround: every fence reported complete)\n", dev, gp);
+    }
+}
+
+static void gpu_idle_start(void)
+{
+    const char *e = getenv("RECOMP_GPU_IDLE_SHIM");
+    if (e && *e == '0')
+        return;
+    CloseHandle(CreateThread(NULL, 0, gpu_idle_main, NULL, 0, NULL));
+}
+
 /* Keeps a fully buffered stderr live; see WinMain. */
 static DWORD WINAPI stderr_flusher(LPVOID unused)
 {
@@ -629,6 +679,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* Step 2: Initialize Xbox memory layout */
     printf("Initializing Xbox memory layout...\n");
+    /* Map 128 MB of guest address space while the title still sees 64 MB of
+     * RAM. Blinx 2's image runs to 0x0303AC20, which leaves the runtime heap
+     * only 14 MB (0x031C0000-0x04000000). The runtime also gives every guest
+     * thread a 512 KB stack whatever the title asks for (the audio threads
+     * ask for 12 KB). The heap ran dry starting the intro movie
+     * ("xbox_HeapAlloc: out of memory (requested 65536, used
+     * 14938388/14942208)"). A bigger mapping lets the heap run to 128 MB
+     * without changing what the title is told about memory; see
+     * xbox_SetMapSize in xbox_memory_layout.h. */
+    xbox_SetMapSize(128u * 1024 * 1024);
+
     if (!xbox_MemoryLayoutInit(xbe_data, xbe_size)) {
         MessageBoxA(NULL, "Failed to initialize Xbox memory layout.\n"
                     "The required virtual address range may be unavailable.",
@@ -715,6 +776,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     sampler_start();
     memdump_start();
     dsp_doorbell_start();
+    gpu_idle_start();
 
     /* Step 7: Call the recompiled entry point */
     printf("\nStarting game...\n");
