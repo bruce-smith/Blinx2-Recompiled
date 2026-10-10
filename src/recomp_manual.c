@@ -45,7 +45,10 @@ typedef void (*recomp_func_t)(void);
 
 /* ── Register state (defined in xbox_memory_layout.c) ──────── */
 
-extern uint32_t g_eax;
+/* Thread-local in the runtime (RECOMP_TLS), so declared the same way here: a
+ * plain extern would compile and then read the wrong storage. */
+extern __declspec(thread) uint32_t g_eax;
+extern __declspec(thread) uint32_t g_esp;
 extern ptrdiff_t g_xbox_mem_offset;
 
 /* ── Manual function overrides ─────────────────────────────── */
@@ -102,13 +105,47 @@ extern ptrdiff_t g_xbox_mem_offset;
  *
  * (Seeding 0x000604A0 into tools/recomp/output/seed_functions.json would make
  * the next regen emit it; this keeps it working without one.) */
-extern __declspec(thread) uint32_t g_esp;
-
 static void vblank_callback_000604A0(void)
 {
     uint32_t *counter = (uint32_t *)((uintptr_t)g_xbox_mem_offset + 0x00AE7388u);
     (*counter)++;
     g_esp += 4;                     /* ret: pop the return address */
+}
+
+/* D3DX's JPEG decoder, guarded by the JPEG SOI marker.
+ *
+ * D3DX's image-format dispatcher (sub_002F9B7D) tries each decoder in turn
+ * until one accepts the data, and this one -- libjpeg -- runs before the
+ * decoder that handles some of the title-screen textures (sub_002F8C1C).
+ * libjpeg reports a bad header with longjmp back to a setjmp inside this
+ * function. Lifted code cannot resume a setjmp site in the middle of a C
+ * function: the trace showed it returning with esp 0x90 bytes too high
+ * (0x031BF6D8 -> 0x031BF768), after which the dispatcher popped 0xFFFFFFFF
+ * into ebx/esi/edi and the caller (sub_002F4EBC) spun forever walking a
+ * surface chain from that garbage. The title screen never loaded.
+ *
+ * On hardware a non-JPEG input costs libjpeg a header check and a longjmp
+ * and comes back E_FAIL. Answer E_FAIL for anything without the SOI marker
+ * before libjpeg sees it. A genuine JPEG still goes through, and would still
+ * hit the same lifting limit if it were corrupt.
+ *
+ * thiscall: ecx = loader, [esp+4] = source data, [esp+8] = size; ret 8.
+ * Requires the recomp to run with --exclude-manual pointing at this file,
+ * so the generated body is emitted as sub_002F89C3_gen. */
+extern void sub_002F89C3_gen(void);
+
+void sub_002F89C3(void)
+{
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t src  = *(const uint32_t *)(mem + g_esp + 4);
+    uint32_t size = *(const uint32_t *)(mem + g_esp + 8);
+
+    if (size < 2 || mem[src] != 0xFF || mem[src + 1] != 0xD8) {
+        g_eax = 0x80004005u;            /* E_FAIL, as the other decoders return */
+        g_esp += 12;                    /* ret 8 */
+        return;
+    }
+    sub_002F89C3_gen();
 }
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
