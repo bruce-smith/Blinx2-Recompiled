@@ -1,0 +1,157 @@
+[
+  {
+    "start": "0x0029A166",
+    "observed": true,
+    "note": "PsCreateSystemThreadEx StartContext1 observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x002D702E",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0032401D",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x00324029",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x00324035",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x003340D7",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x003340E2",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x003355DF",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x003355EA",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CE20",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CE50",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CE80",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CEB0",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CEE0",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CF10",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CF40",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CF70",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CFA0",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033CFD0",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033D000",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033D030",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033D090",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x0033D0C0",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x00367E8D",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x001B8BF0",
+    "observed": true,
+    "note": "PsCreateSystemThreadEx StartContext1 observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x00366CBC",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x003674FA",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime; decodes as a function body."
+  },
+  {
+    "start": "0x002D0450",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime (2026-10-10)"
+  },
+  {
+    "start": "0x0033A340",
+    "observed": true,
+    "note": "Sofdec PSFD_I entry, indirect-call target observed at runtime"
+  },
+  {
+    "start": "0x0033B040",
+    "observed": true,
+    "note": "Sofdec PSFD_P entry, indirect-call target observed at runtime"
+  },
+  {
+    "start": "0x000604A0",
+    "observed": true,
+    "note": "Vertical-blank callback passed to D3D SetVerticalBlankCallback"
+  }
+]
