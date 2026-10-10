@@ -84,17 +84,37 @@ extern ptrdiff_t g_xbox_mem_offset;
  *       g_eax = result;
  *   }
  */
+/* The title's vertical-blank callback, 0x000604A0:
+ *
+ *     mov eax, [0x00AE7388]
+ *     inc eax
+ *     mov [0x00AE7388], eax
+ *     ret
+ *
+ * The main loop paces frames on that counter (sub_0005F960 at 0x00060475:
+ * `while (vblanks < target)`). The game hands the address to D3D's
+ * SetVerticalBlankCallback (sub_002E0D90), and D3D's NV2A interrupt routine
+ * calls it once per vblank. Nothing else references it, so the disassembler
+ * never found it and it has no generated body. Every call through it was
+ * "[ICALL] Failed to resolve VA 0x000604A0", the counter stayed 0, and the
+ * boot hung at the intro movie. Needs RECOMP_VBLANK=1 so the runtime raises
+ * the vblank interrupt at all.
+ *
+ * (Seeding 0x000604A0 into tools/recomp/output/seed_functions.json would make
+ * the next regen emit it; this keeps it working without one.) */
+extern __declspec(thread) uint32_t g_esp;
+
+static void vblank_callback_000604A0(void)
+{
+    uint32_t *counter = (uint32_t *)((uintptr_t)g_xbox_mem_offset + 0x00AE7388u);
+    (*counter)++;
+    g_esp += 4;                     /* ret: pop the return address */
+}
+
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
-    /*
-     * TODO: Add your overrides here. Examples:
-     *
-     * if (xbox_va == 0x00012345) return traced_sub_00012345;
-     * if (xbox_va == 0x00067890) return stub_00067890;
-     * if (xbox_va == 0x000ABCDE) return fixed_sub_000ABCDE;
-     */
-
-    (void)xbox_va;
+    if (xbox_va == 0x000604A0u)
+        return vblank_callback_000604A0;
     return (recomp_func_t)0;
 }
 

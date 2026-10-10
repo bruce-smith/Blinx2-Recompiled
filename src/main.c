@@ -654,6 +654,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         CloseHandle(CreateThread(NULL, 0, stderr_flusher, NULL, 0, NULL));
     }
 
+    /* Raise the NV2A vblank interrupt (~60 Hz). D3D's ISR calls the title's
+     * vertical-blank callback (0x000604A0, see recomp_manual.c), and the main
+     * loop paces every frame on the counter it bumps -- without it the boot
+     * stops at the intro movie. The runtime only checks that the variable
+     * exists, so it is set here unless the environment already has it. */
+    if (!getenv("RECOMP_VBLANK"))
+        _putenv_s("RECOMP_VBLANK", "1");
+
     /* The DirectSound GP-DSP doorbell is acked by a thread started later, once
      * guest memory exists; see dsp_doorbell_start(). */
 
