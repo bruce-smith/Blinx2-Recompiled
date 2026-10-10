@@ -248,6 +248,40 @@ static void sampler_start(void)
     fprintf(stderr, "[SAMPLE] sampling the guest main thread every %d ms\n", atoi(e));
 }
 
+/* RECOMP_MEMDUMP_SECS=<n>: every n seconds, write guest RAM (the 64 MB from
+ * VA 0) to memdump.bin in the current directory, overwriting the previous
+ * snapshot -- boot speed varies run to run, so the last one before a kill or
+ * the watchdog is the one that shows the stuck state. A hang that lives in game
+ * data rather than code -- a name table full of garbage, a struct never
+ * filled -- is answered by searching the snapshot offline, which no trace
+ * that has to be decided up front can do. Racy by nature (the guest keeps
+ * running while it is copied); it is a snapshot, not a checkpoint. */
+static DWORD WINAPI memdump_main(LPVOID param)
+{
+    unsigned n = 0;
+    for (;;) {
+        FILE *f;
+        Sleep((DWORD)(uintptr_t)param * 1000);
+        f = fopen("memdump.bin", "wb");
+        if (!f) {
+            fprintf(stderr, "[MEMDUMP] cannot open memdump.bin\n");
+            return 0;
+        }
+        fwrite((const void *)(uintptr_t)g_xbox_mem_offset, 1, 0x04000000, f);
+        fclose(f);
+        fprintf(stderr, "[MEMDUMP] snapshot #%u of guest RAM in memdump.bin\n",
+                ++n);
+    }
+}
+
+static void memdump_start(void)
+{
+    const char *e = getenv("RECOMP_MEMDUMP_SECS");
+    if (!e || atoi(e) <= 0) return;
+    CloseHandle(CreateThread(NULL, 0, memdump_main,
+                             (LPVOID)(uintptr_t)atoi(e), 0, NULL));
+}
+
 static void print_guest_context(void *rip)
 {
     /* SYMBOL_INFO is variable-length: the name is written past the struct, so
@@ -580,6 +614,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * does nothing while appearing to be set. */
     xbox_WatchdogStart();
     sampler_start();
+    memdump_start();
 
     /* Step 7: Call the recompiled entry point */
     printf("\nStarting game...\n");
