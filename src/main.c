@@ -319,6 +319,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    /* DirectSound's GP-DSP command doorbell for this title. sub_003341BE
+     * (under the DSOUND lock 0x00339ADC) writes 3 to scratch+0x810 and spins
+     * until the DSP clears it; the GP DSP is a passthrough stub, so the
+     * runtime's DSP-ack tick has to. The address is stable across runs (taken
+     * from the watchdog's ebx). Only matters with RECOMP_AC97_READY=1; an
+     * explicit RECOMP_DSP_ACK overrides it. See
+     * notes/audio-spin-fix.md. */
+    if (!getenv("RECOMP_DSP_ACK"))
+        _putenv_s("RECOMP_DSP_ACK", "0x803D0810");
+
     printf("=== Blinx 2 - Static Recompilation ===\n");
     printf("Loading XBE...\n");
 
