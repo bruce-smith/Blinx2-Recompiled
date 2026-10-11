@@ -718,6 +718,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (!getenv("RECOMP_VBLANK"))
         _putenv_s("RECOMP_VBLANK", "1");
 
+    /* Contiguous memory must be reclaimable. The title scene frees its
+     * MmAllocateContiguousMemory blocks and the attract stage allocates new
+     * ones; with the default bump allocator the 64 MB window runs out right
+     * after the stg0101 cache copy, and the game shows its "dirty disc" error.
+     * Same existence-only check as RECOMP_VBLANK. */
+    if (!getenv("RECOMP_HEAP_RECLAIM"))
+        _putenv_s("RECOMP_HEAP_RECLAIM", "1");
+
     /* The DirectSound GP-DSP doorbell is acked by a thread started later, once
      * guest memory exists; see dsp_doorbell_start(). */
 
