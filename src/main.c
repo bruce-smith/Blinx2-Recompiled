@@ -242,10 +242,30 @@ static DWORD WINAPI sampler_main(LPVOID param)
     }
 }
 
+/* RECOMP_SAMPLE_GPU=2: raster worker 0 instead. Its pool starts with the
+ * first draw, after boot, so wait for it here rather than in sampler_start. */
+extern void *nv2a_pb_exec_raster_thread(int k);
+
+static DWORD WINAPI raster_sampler_main(LPVOID param)
+{
+    while (!nv2a_pb_exec_raster_thread(0))
+        Sleep(500);
+    DuplicateHandle(GetCurrentProcess(), (HANDLE)nv2a_pb_exec_raster_thread(0),
+                    GetCurrentProcess(), &s_sample_target, 0, FALSE,
+                    DUPLICATE_SAME_ACCESS);
+    fprintf(stderr, "[SAMPLE] sampling raster worker 0\n");
+    return sampler_main(param);
+}
+
 static void sampler_start(void)
 {
     const char *e = getenv("RECOMP_SAMPLE_MS");
+    const char *g = getenv("RECOMP_SAMPLE_GPU");
     if (!e || atoi(e) <= 0) return;
+    if (g && atoi(g) == 2) {
+        CreateThread(NULL, 0, raster_sampler_main, (LPVOID)(uintptr_t)atoi(e), 0, NULL);
+        return;
+    }
     /* RECOMP_SAMPLE_GPU=1 samples the NV2A worker thread instead -- where the
      * pushbuffer executor runs under RECOMP_PB_EXEC. When the main thread is
      * stuck waiting for pushbuffer space, that is the thread worth timing. */
