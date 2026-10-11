@@ -218,6 +218,35 @@ void sub_00367F0E(void)
     }
 }
 
+/* D3D's NV2A interrupt routine (sub_002EA2E0), sampled. RECOMP_VBL_TRACE=1
+ * prints the fields it gates the vblank work on, every 60th call. It showed
+ * PMC_INTR_0 already zero when the ISR ran (the ack thread cleared it), which
+ * is why the frame callback ran at 2-3 Hz. */
+extern void sub_002EA2E0_gen(void);
+
+void sub_002EA2E0(void)
+{
+    static int trace = -1;
+    static uint32_t calls;
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t esi_ = *(const uint32_t *)(mem + g_esp + 8);
+
+    if (trace < 0)
+        trace = getenv("RECOMP_VBL_TRACE") != NULL;
+    if (trace && (calls++ % 60) == 0 && esi_) {
+        uint32_t edi_ = *(const uint32_t *)(mem + esi_);
+#define F(o) (*(const uint32_t *)(mem + esi_ + (o)))
+        fprintf(stderr, "  [VBL] #%u esi=%08X A0=%08X A4=%08X 8=%08X 1B4=%08X "
+                "1BC=%08X 1C0=%08X 1D0=%08X edi=%08X [edi+140]=%08X "
+                "[edi+100]=%08X\n", calls, esi_, F(0xA0), F(0xA4), F(8),
+                F(0x1B4), F(0x1BC), F(0x1C0), F(0x1D0), edi_,
+                edi_ ? *(const uint32_t *)(mem + edi_ + 0x140) : 0,
+                edi_ ? *(const uint32_t *)(mem + edi_ + 0x100) : 0);
+#undef F
+    }
+    sub_002EA2E0_gen();
+}
+
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
     if (xbox_va == 0x000604A0u)

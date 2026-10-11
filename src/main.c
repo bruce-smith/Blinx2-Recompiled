@@ -31,6 +31,7 @@
  */
 
 #include <windows.h>
+#include <mmsystem.h>       /* timeBeginPeriod */
 #include <dbghelp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -717,6 +718,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         setvbuf(stderr, NULL, _IOFBF, 1 << 20);
         CloseHandle(CreateThread(NULL, 0, stderr_flusher, NULL, 0, NULL));
     }
+
+    /* 1 ms timer resolution for the whole process. The helper threads that
+     * stand in for hardware -- the GPU-idle shim (Sleep(1)), the kernel
+     * timer thread that raises vblank (Sleep(10)) -- otherwise sleep in
+     * 15.6 ms steps, and D3D's fence wait (sub_002E8110) spent a third of the
+     * main thread's time waiting for the shim's next wake. */
+    timeBeginPeriod(1);
 
     /* Raise the NV2A vblank interrupt (~60 Hz). D3D's ISR calls the title's
      * vertical-blank callback (0x000604A0, see recomp_manual.c), and the main
