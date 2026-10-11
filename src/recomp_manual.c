@@ -20,6 +20,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>         /* getenv */
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
 
@@ -146,6 +147,75 @@ void sub_002F89C3(void)
         return;
     }
     sub_002F89C3_gen();
+}
+
+/* XInputGetState (XAPI, in the XPP section), traced.
+ *
+ * cdecl (handle, XINPUT_STATE *); copies dwPacketNumber from [handle+8] and
+ * the gamepad block from handle+0x14, returns 0 or ERROR_DEVICE_NOT_CONNECTED
+ * (0x48F). RECOMP_XINPUT_TRACE=1 logs the first call per handle and every
+ * change of packet number + buttons, so "the pad reports Start but the title
+ * does not move" can be split into "the title never reads it" and "it reads
+ * it and ignores it". */
+extern void sub_00368457_gen(void);
+
+void sub_00368457(void)
+{
+    static int trace = -1;
+    static uint32_t last_handle, last_buttons, calls;
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t handle = *(const uint32_t *)(mem + g_esp + 4);
+    uint32_t state  = *(const uint32_t *)(mem + g_esp + 8);
+
+    sub_00368457_gen();
+
+    if (trace < 0)
+        trace = getenv("RECOMP_XINPUT_TRACE") != NULL;
+    if (trace) {
+        uint32_t buttons = *(const uint16_t *)(mem + state + 4);
+        calls++;
+        if (handle != last_handle || buttons != last_buttons
+                || (calls & 0x3FF) == 1) {
+            fprintf(stderr, "  [XINPUT] GetState #%u handle=0x%08X -> %u "
+                    "packet=%u buttons=0x%04X A=%u [h+0]=%08X [h+8]=%08X "
+                    "[h+A3]=%08X\n", calls, handle, g_eax,
+                    *(const uint32_t *)(mem + state),
+                    buttons, mem[state + 8],
+                    *(const uint32_t *)(mem + handle),
+                    *(const uint32_t *)(mem + handle + 8),
+                    *(const uint32_t *)(mem + handle + 0xA3));
+            last_handle = handle;
+            last_buttons = buttons;
+        }
+    }
+}
+
+/* XGetDeviceChanges (XAPI): cdecl (type, DWORD *insertions, DWORD *removals).
+ * Under RECOMP_XINPUT_TRACE, log every non-empty change and how often the
+ * game's pad poll (sub_0021C290, its only caller here) runs. */
+extern void sub_00367F0E_gen(void);
+
+void sub_00367F0E(void)
+{
+    static int trace = -1;
+    static uint32_t calls;
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t type = *(const uint32_t *)(mem + g_esp + 4);
+    uint32_t pins = *(const uint32_t *)(mem + g_esp + 8);
+    uint32_t prem = *(const uint32_t *)(mem + g_esp + 12);
+
+    sub_00367F0E_gen();
+
+    if (trace < 0)
+        trace = getenv("RECOMP_XINPUT_TRACE") != NULL;
+    if (trace) {
+        uint32_t ins = *(const uint32_t *)(mem + pins);
+        uint32_t rem = *(const uint32_t *)(mem + prem);
+        calls++;
+        if (ins || rem || (calls & 0x3FF) == 1)
+            fprintf(stderr, "  [XINPUT] DeviceChanges #%u type=0x%08X -> %u "
+                    "insert=0x%X remove=0x%X\n", calls, type, g_eax, ins, rem);
+    }
 }
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
