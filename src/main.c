@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <signal.h>
 #include <math.h>
 
 /* xboxrecomp runtime headers */
@@ -522,9 +523,60 @@ extern bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
 #define APU_TRAP_BASE 0xFE800000u
 #define APU_TRAP_END  0xFE880000u
 
+/* Every way the process can end should say so. A run died ~8 min in with no
+ * [CRASH], no watchdog and no exit message: the VEH below only reported
+ * access violations. These cover the rest.
+ *
+ * A host stack overflow runs this on the few KB left past the guard page,
+ * so that path formats into a local buffer and writes straight to the stderr
+ * handle -- no stdio, which could need its lock or more stack. */
+static void raw_stderr(const char *s)
+{
+    DWORD w;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), s, (DWORD)strlen(s), &w, NULL);
+}
+
+static void exit_report_atexit(void)
+{
+    fprintf(stderr, "[EXIT] process exiting through the CRT (exit/return)\n");
+    fflush(stderr);
+}
+
+static void exit_report_sigabrt(int sig)
+{
+    (void)sig;
+    fflush(stderr);
+    raw_stderr("[CRASH] abort() (SIGABRT)\n");
+}
+
 static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
 {
-    if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+    DWORD code = ep->ExceptionRecord->ExceptionCode;
+
+    if (code == EXCEPTION_STACK_OVERFLOW) {
+        char b[192];
+        _snprintf(b, sizeof(b), "\n[CRASH] host STACK OVERFLOW, thread %lu, "
+                  "RIP=%p, guest esp=0x%08X\n", GetCurrentThreadId(),
+                  (void *)ep->ContextRecord->Rip, g_esp);
+        b[sizeof(b) - 1] = 0;
+        raw_stderr(b);
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if (code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_PRIV_INSTRUCTION
+            || code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_INT_OVERFLOW
+            || code == EXCEPTION_ARRAY_BOUNDS_EXCEEDED
+            || code == EXCEPTION_NONCONTINUABLE_EXCEPTION) {
+        fprintf(stderr, "[CRASH] exception 0x%08lX at RIP=0x%llX, host thread %lu\n",
+                code, (unsigned long long)ep->ContextRecord->Rip,
+                GetCurrentThreadId());
+        fprintf(stderr, "  Xbox regs: eax=0x%08X ecx=0x%08X edx=0x%08X esp=0x%08X\n",
+                g_eax, g_ecx, g_edx, g_esp);
+        print_guest_context((void *)ep->ContextRecord->Rip);
+        fflush(stderr);
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    if (code == EXCEPTION_ACCESS_VIOLATION) {
         uintptr_t fault_addr = ep->ExceptionRecord->ExceptionInformation[1];
 
         /*
@@ -675,6 +727,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
     SymInitialize(GetCurrentProcess(), NULL, TRUE);
     AddVectoredExceptionHandler(1, veh_handler);
+    atexit(exit_report_atexit);
+    signal(SIGABRT, exit_report_sigabrt);
 
     /* Step 1: Load XBE */
     if (!load_xbe(BLINX_2_XBE_PATH, &xbe_data, &xbe_size)) {
