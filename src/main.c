@@ -34,6 +34,7 @@
 #include <mmsystem.h>       /* timeBeginPeriod */
 #include <dbghelp.h>
 #include <stdio.h>
+#include <io.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -699,6 +700,32 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+/* Set from RECOMP_HEADLESS in WinMain: no window, no dialogs. */
+static int s_headless;
+
+extern void xbox_FramebufferWindowSetTitle(const uint16_t *name, int max_chars);
+
+/* A crash nothing handled. The VEH above sees first-chance exceptions and
+ * only logs; this runs once the process is going down, so it is the place to
+ * tell a player who has no console that the game died, and where the
+ * details are. */
+static LONG WINAPI fatal_filter(PEXCEPTION_POINTERS ep)
+{
+    fflush(stderr);
+    if (!s_headless) {
+        char msg[256];
+        _snprintf(msg, sizeof(msg),
+                  "Blinx 2 (recomp) crashed: exception 0x%08lX at 0x%llX.\n\n"
+                  "Details are in blinx2_recomp.log and xbox_kernel.log next to "
+                  "the exe.",
+                  ep->ExceptionRecord->ExceptionCode,
+                  (unsigned long long)ep->ContextRecord->Rip);
+        msg[sizeof(msg) - 1] = 0;
+        MessageBoxA(NULL, msg, "Blinx 2 (recomp)", MB_ICONERROR | MB_OK);
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 /* ── WinMain ───────────────────────────────────────────────── */
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -711,6 +738,44 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     (void)hPrevInstance;
     (void)lpCmdLine;
     (void)nCmdShow;
+
+    /* Run from the exe's own folder. xbox_kernel.log, the stderr log below
+     * and the runtime's relative paths all land in the working directory,
+     * and a shell launch does not always make that the exe's folder (one
+     * started through explorer.exe ran in System32 and wrote nothing). */
+    {
+        char path[MAX_PATH];
+        DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
+        if (n && n < MAX_PATH) {
+            char *slash = strrchr(path, '\\');
+            if (slash) {
+                *slash = 0;
+                SetCurrentDirectoryA(path);
+            }
+        }
+    }
+
+    /* Launched by double-click there is no console and no redirection, so
+     * stderr goes nowhere and a crash leaves no trace. Write it to
+     * blinx2_recomp.log in the working directory instead, and point the
+     * raw-handle writers (raw_stderr) at the same file. stdout (a few banner
+     * lines) stays put: reopening it onto the same file failed fast in the
+     * CRT (0xC0000409). */
+    {
+        HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+        DWORD type = (h && h != INVALID_HANDLE_VALUE) ? GetFileType(h)
+                                                      : FILE_TYPE_UNKNOWN, mode;
+        /* No handle, or a character device that is not a console (NUL, which
+         * is what a shell launch can hand down). Files and pipes -- a
+         * redirected run -- are left alone. */
+        if (_fileno(stderr) < 0 || type == FILE_TYPE_UNKNOWN
+                || (type == FILE_TYPE_CHAR && !GetConsoleMode(h, &mode))) {
+            FILE *f;
+            if (freopen_s(&f, "blinx2_recomp.log", "w", stderr) == 0)
+                SetStdHandle(STD_ERROR_HANDLE,
+                             (HANDLE)_get_osfhandle(_fileno(stderr)));
+        }
+    }
 
     /* stdout unbuffered; stderr fully buffered, flushed every 500 ms.
      *
@@ -745,6 +810,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (!getenv("RECOMP_VBLANK"))
         _putenv_s("RECOMP_VBLANK", "1");
 
+    /* Playable by default: a double-clicked exe has no console and nobody
+     * sets environment variables, and with these off it ran invisibly.
+     *   RECOMP_PB_EXEC    execute the pushbuffer (software rasteriser)
+     *   RECOMP_FB_WINDOW  show the framebuffer; closing it ends the process
+     *   RECOMP_USB        the emulated USB gamepad (host XInput pad)
+     *   RECOMP_KEYBOARD   keys on top of it: arrows, Enter=Start, Z/X/A/S
+     * Each is set only when unset. RECOMP_HEADLESS=1 leaves all four alone,
+     * for log-only and scripted runs. */
+    s_headless = getenv("RECOMP_HEADLESS") != NULL;
+    if (!s_headless) {
+        static const char *const on[] = {
+            "RECOMP_PB_EXEC", "RECOMP_FB_WINDOW", "RECOMP_USB", "RECOMP_KEYBOARD"
+        };
+        int i;
+        for (i = 0; i < 4; i++)
+            if (!getenv(on[i]))
+                _putenv_s(on[i], "1");
+    }
+
     /* Contiguous memory must be reclaimable. The title scene frees its
      * MmAllocateContiguousMemory blocks and the attract stage allocates new
      * ones; with the default bump allocator the 64 MB window runs out right
@@ -766,6 +850,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
     SymInitialize(GetCurrentProcess(), NULL, TRUE);
     AddVectoredExceptionHandler(1, veh_handler);
+    SetUnhandledExceptionFilter(fatal_filter);
     atexit(exit_report_atexit);
     signal(SIGABRT, exit_report_sigabrt);
 
@@ -895,6 +980,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     memdump_start();
     dsp_doorbell_start();
     gpu_idle_start();
+
+    /* After the XBE load, which titles the window from the certificate
+     * ("BLiNX2"). */
+    if (!s_headless)
+        xbox_FramebufferWindowSetTitle((const uint16_t *)L"Blinx 2 (recomp)", 47);
 
     /* Step 7: Call the recompiled entry point */
     printf("\nStarting game...\n");
