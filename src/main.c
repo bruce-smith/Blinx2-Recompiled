@@ -245,6 +245,17 @@ static void sampler_start(void)
 {
     const char *e = getenv("RECOMP_SAMPLE_MS");
     if (!e || atoi(e) <= 0) return;
+    /* RECOMP_SAMPLE_GPU=1 samples the NV2A worker thread instead -- where the
+     * pushbuffer executor runs under RECOMP_PB_EXEC. When the main thread is
+     * stuck waiting for pushbuffer space, that is the thread worth timing. */
+    if (getenv("RECOMP_SAMPLE_GPU") && xbox_Nv2aWorkerThread()) {
+        DuplicateHandle(GetCurrentProcess(), (HANDLE)xbox_Nv2aWorkerThread(),
+                        GetCurrentProcess(), &s_sample_target, 0, FALSE,
+                        DUPLICATE_SAME_ACCESS);
+        CreateThread(NULL, 0, sampler_main, (LPVOID)(uintptr_t)atoi(e), 0, NULL);
+        fprintf(stderr, "[SAMPLE] sampling the NV2A worker thread every %d ms\n", atoi(e));
+        return;
+    }
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(),
                     &s_sample_target, 0, FALSE, DUPLICATE_SAME_ACCESS);
     CreateThread(NULL, 0, sampler_main, (LPVOID)(uintptr_t)atoi(e), 0, NULL);
