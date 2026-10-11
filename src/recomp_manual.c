@@ -175,7 +175,7 @@ void sub_00368457(void)
         uint32_t buttons = *(const uint16_t *)(mem + state + 4);
         calls++;
         if (handle != last_handle || buttons != last_buttons
-                || (calls & 0x3FF) == 1) {
+                || (calls & 0x1F) == 1) {
             fprintf(stderr, "  [XINPUT] GetState #%u handle=0x%08X -> %u "
                     "packet=%u buttons=0x%04X A=%u [h+0]=%08X [h+8]=%08X "
                     "[h+A3]=%08X\n", calls, handle, g_eax,
@@ -212,7 +212,7 @@ void sub_00367F0E(void)
         uint32_t ins = *(const uint32_t *)(mem + pins);
         uint32_t rem = *(const uint32_t *)(mem + prem);
         calls++;
-        if (ins || rem || (calls & 0x3FF) == 1)
+        if (ins || rem || (calls & 0x1F) == 1)
             fprintf(stderr, "  [XINPUT] DeviceChanges #%u type=0x%08X -> %u "
                     "insert=0x%X remove=0x%X\n", calls, type, g_eax, ins, rem);
     }
