@@ -41,6 +41,7 @@
 
 /* xboxrecomp runtime headers */
 #include <xbox/xboxrecomp.h>
+#include "ohci.h"          /* xbox_usb: USB host controller model */
 
 /*
  * If xboxrecomp.h is not an umbrella header in your setup, include
@@ -612,6 +613,13 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
                                ? 1 : 0)) {
                 return EXCEPTION_CONTINUE_EXECUTION;
             }
+
+            /* USB host controllers -> the OHCI model (RECOMP_USB=1). XAPI
+             * drives the gamepad through these registers directly, and
+             * xbox_OhciInit traps the two 4 KB apertures so they land here. */
+            if (xbox_OhciOwnsAddress(xbox_va)
+                    && xbox_OhciHandleMmio(ep->ContextRecord, xbox_va))
+                return EXCEPTION_CONTINUE_EXECUTION;
         }
 
         fprintf(stderr, "[CRASH] Access violation at RIP=0x%llX, fault addr=0x%llX (%s)\n",
@@ -774,6 +782,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     g_xbox_mem_offset = xbox_GetMemoryOffset();
     printf("Xbox memory mapped. Offset: 0x%llX\n", (unsigned long long)g_xbox_mem_offset);
+
+    /* Controller input. The OHCI model traps the USB host-controller
+     * apertures (0xFED00000 / 0xFED08000) and serves XAPI's register traffic
+     * through the VEH above; it needs guest memory mapped, so it comes after
+     * the layout. Nothing called it before, which left RECOMP_USB and
+     * RECOMP_PAD_PRESS inert. Still opt-in: it does nothing unless
+     * RECOMP_USB is set. */
+    xbox_OhciInit();
 
     /* Bring up the emulated APU.
      *
