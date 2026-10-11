@@ -172,7 +172,8 @@ void sub_00368457(void)
     if (trace < 0)
         trace = getenv("RECOMP_XINPUT_TRACE") != NULL;
     if (trace) {
-        uint32_t buttons = *(const uint16_t *)(mem + state + 4);
+        uint32_t buttons = *(const uint16_t *)(mem + state + 4)
+                         | ((uint32_t)mem[state + 6] << 16);   /* + analog A */
         calls++;
         if (handle != last_handle || buttons != last_buttons
                 || (calls & 0x1F) == 1) {
@@ -180,7 +181,7 @@ void sub_00368457(void)
                     "packet=%u buttons=0x%04X A=%u [h+0]=%08X [h+8]=%08X "
                     "[h+A3]=%08X\n", calls, handle, g_eax,
                     *(const uint32_t *)(mem + state),
-                    buttons, mem[state + 8],
+                    buttons, mem[state + 6],
                     *(const uint32_t *)(mem + handle),
                     *(const uint32_t *)(mem + handle + 8),
                     *(const uint32_t *)(mem + handle + 0xA3));
