@@ -198,5 +198,15 @@
     "start": "0x00193BC0",
     "observed": true,
     "note": "Indirect-call target observed during the attract stage (1160 failed ICALLs). Follows a switch table in the gap after 0x00193A8A."
+  },
+  {
+    "start": "0x002CC9D0",
+    "observed": true,
+    "note": "Indirect-call target observed during R0_opening.sfd after Start (6 failed ICALLs, then crash in sub_002BC2B0). Starts in the 16 KB gap 0x002CC533-0x002D0450, which opens with data."
+  },
+  {
+    "start": "0x000C15C0",
+    "observed": true,
+    "note": "Indirect-call target observed in the hub level (mgtu_ts) after the opening movie (753 failed ICALLs). Gap 0x000C15C0-0x000C1600."
   }
 ]
