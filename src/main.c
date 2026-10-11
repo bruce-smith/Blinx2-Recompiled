@@ -772,6 +772,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * xbox_SetMapSize in xbox_memory_layout.h. */
     xbox_SetMapSize(128u * 1024 * 1024);
 
+    /* Contiguous arena above the image, in a 128 MB window. Device models
+     * follow physical pointers, and with the arena starting at 0x1000 every
+     * arena address below the image top (0x0303AC20) also names image
+     * bytes: the OHCI model read the USB stack's control ED (physical
+     * 0x0085C670) out of the image, saw an empty list, and the pad never
+     * enumerated. RECOMP_CONTIG_LEGACY=1 restores 64 MB from 0x1000. */
+    if (!getenv("RECOMP_CONTIG_LEGACY"))
+        xbox_SetContigLayout(128u * 1024 * 1024, 1);
+
     if (!xbox_MemoryLayoutInit(xbe_data, xbe_size)) {
         MessageBoxA(NULL, "Failed to initialize Xbox memory layout.\n"
                     "The required virtual address range may be unavailable.",
