@@ -153,5 +153,50 @@
     "start": "0x000604A0",
     "observed": true,
     "note": "Vertical-blank callback passed to D3D SetVerticalBlankCallback"
+  },
+  {
+    "start": "0x0036BA63",
+    "observed": true,
+    "note": "XPP: USB completion callback called right after SET_CONFIGURATION; unresolved ICALL stopped pad enumeration. Gap after sub_0036B813."
+  },
+  {
+    "start": "0x0009D970",
+    "observed": true,
+    "note": "Indirect-call target observed during the attract stage (720 failed ICALLs). Gap after 0x0009D940."
+  },
+  {
+    "start": "0x000AACB0",
+    "observed": true,
+    "note": "Indirect-call target observed during the attract stage (720 failed ICALLs). Gap after 0x000AAC9B."
+  },
+  {
+    "start": "0x000EF390",
+    "observed": true,
+    "note": "Indirect-call target observed during the attract stage. Gap after 0x000EF372."
+  },
+  {
+    "start": "0x0036AFFE",
+    "observed": true,
+    "note": "XPP: interrupt-transfer completion routine; 1401 unresolved ICALLs while the pad served 665 reports. Gap after 0x0036AF74-0x0036AFFE."
+  },
+  {
+    "start": "0x00367C37",
+    "observed": false,
+    "note": "XPP gap (53 bytes) that decodes as a function (mov ecx,[esp+4]; push esi; call 0x369F3B), same shape as 0x0036B444; not yet observed at runtime."
+  },
+  {
+    "start": "0x0036B444",
+    "observed": false,
+    "note": "XPP gap (59 bytes) that decodes as a function (mov ecx,[esp+4]; push esi; call 0x369F3B); not yet observed at runtime."
+  },
+  {
+    "start": "0x0036C7B8",
+    "observed": false,
+    "note": "XPP gap (226 bytes) that decodes as a function (mov ax,[0x4B743A]; push ebx; push esi); not yet observed at runtime."
+  },
+  {
+    "start": "0x00193BC0",
+    "observed": true,
+    "note": "Indirect-call target observed during the attract stage (1160 failed ICALLs). Follows a switch table in the gap after 0x00193A8A."
   }
 ]
