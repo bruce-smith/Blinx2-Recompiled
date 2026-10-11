@@ -268,7 +268,11 @@ static DWORD WINAPI memdump_main(LPVOID param)
             fprintf(stderr, "[MEMDUMP] cannot open memdump.bin\n");
             return 0;
         }
-        fwrite((const void *)(uintptr_t)g_xbox_mem_offset, 1, 0x04000000, f);
+        /* The whole mapped range, not just 64 MB of RAM: with
+         * xbox_SetMapSize(128 MB) the heap -- and the stacks of threads
+         * spawned late -- live above 0x04000000. */
+        fwrite((const void *)(uintptr_t)g_xbox_mem_offset, 1,
+               g_xbox_map_size ? g_xbox_map_size : 0x04000000, f);
         fclose(f);
         fprintf(stderr, "[MEMDUMP] snapshot #%u of guest RAM in memdump.bin\n",
                 ++n);
