@@ -411,6 +411,48 @@ static DWORD WINAPI dsp_doorbell_main(LPVOID unused)
  * so this prints the links, checks each Blink, and stops at a repeat. */
 #define DS_TIMER_DPC 0x00334A70u
 
+/* DirectSound's APU DPC (0x00334BDF -> sub_00334B43 -> sub_003346BE), the one
+ * that froze stage 01-01 (2026-10-12 capture). Its second loop pops voices
+ * off the "idle, being retired" list at ctx+0x4A0 (voice object + 0x54) and
+ * calls their vtbl+0x18 (sub_003371D1) until the list is empty. The APU ISR
+ * fills that list: SE2FE_IDLE_VOICE -> sub_003347D1 -> sub_00335C18(v, 1)
+ * unlinks the voice from the hardware list and parks it there, unless
+ * DirectSound's busy count ctx+0x84 is set. Printed: each parked voice's
+ * handle, hardware list, flags and notifier-3 status, and that count. */
+#define DS_APU_DPC 0x00334BDFu
+
+static void dsound_apu_dpc_dump(const uint8_t *mem, uint32_t ctx,
+                                unsigned clock_reads)
+{
+#define G32(a) (*(const uint32_t *)(mem + (a)))
+#define G16(a) (*(const uint16_t *)(mem + (a)))
+#define G8(a)  (*(const uint8_t *)(mem + (a)))
+    uint32_t head = ctx + 0x4A0, e, prev;
+    unsigned n = 0;
+
+    fprintf(stderr, "  [DSAPU] ctx 0x%08X busy %u ISR bits %08X DPC bits %08X;"
+            " %u clock reads; parked list Flink %08X Blink %08X\n", ctx,
+            G32(ctx + 0x84), G32(ctx + 0x4B8), G32(ctx + 0x4C0), clock_reads,
+            G32(head), G32(head + 4));
+    for (prev = head, e = G32(head); e != head && n < 16; prev = e, e = G32(e), n++) {
+        uint32_t v = e - 0x54, ntf;
+        if (!guest_ptr_ok(e)) {
+            fprintf(stderr, "  [DSAPU]   bad link 0x%08X after 0x%08X\n", e, prev);
+            break;
+        }
+        ntf = G32(v + 0x68);
+        fprintf(stderr, "  [DSAPU]   voice obj 0x%08X%s handle %u (n %u) hw list %u"
+                " flags %04X ntf3 %02X\n", v,
+                G32(e + 4) == prev ? "" : " (Blink != prev!)", G16(v + 0xC),
+                G8(v + 0x64), G8(v + 0x65), G16(v + 0x12),
+                guest_ptr_ok(ntf) ? G8(ntf + 0x3F) : 0xEE);
+    }
+#undef G8
+#undef G16
+#undef G32
+    fflush(stderr);
+}
+
 static void dsound_timer_spin_hook(uint32_t dpc_va, uint32_t routine,
                                    uint32_t ctx, unsigned clock_reads)
 {
@@ -419,7 +461,11 @@ static void dsound_timer_spin_hook(uint32_t dpc_va, uint32_t routine,
     LARGE_INTEGER now;
     unsigned n = 0, i;
 
-    (void)dpc_va; (void)clock_reads;
+    (void)dpc_va;
+    if (routine == DS_APU_DPC && guest_ptr_ok(ctx)) {
+        dsound_apu_dpc_dump(mem, ctx, clock_reads);
+        return;
+    }
     if (routine != DS_TIMER_DPC || !guest_ptr_ok(ctx))
         return;
     xbox_KeQuerySystemTime(&now);
