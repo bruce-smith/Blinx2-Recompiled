@@ -68,6 +68,26 @@ add_executable(${PROJECT_NAME} WIN32
     ${RECOMP_GEN_SOURCES}
 )
 
+# Both repos' commits, for the input recording's header (and anything else
+# that should say which build produced it). Read at configure time, so a
+# rebuild without a reconfigure keeps the old values.
+find_package(Git QUIET)
+set(BLINX2_GIT_SHA "unknown")
+set(XBOXRECOMP_GIT_SHA "unknown")
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                    OUTPUT_VARIABLE BLINX2_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../xboxrecomp
+                    OUTPUT_VARIABLE XBOXRECOMP_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+endif()
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    BLINX2_GIT_SHA="${BLINX2_GIT_SHA}"
+    XBOXRECOMP_GIT_SHA="${XBOXRECOMP_GIT_SHA}")
+
 # Link against the xboxrecomp umbrella target (all 6 runtime libraries)
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp)
 

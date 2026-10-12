@@ -864,6 +864,44 @@ static void rotate_log(const char *base, int keep)
         DeleteFileA(names[i]);
 }
 
+/* blinx2_input.rec (the input recording, see recomp_manual.c) goes with the
+ * log of the same run: it is renamed with blinx2_recomp.log's timestamp, so
+ * blinx2_input.prev-<T>.rec pairs with blinx2_recomp.prev-<T>.log. Call
+ * before rotate_log moves that log. Keeps the newest `keep`. */
+static void rotate_rec(int keep)
+{
+    static char names[64][MAX_PATH];
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    int n = 0, i;
+
+    if (GetFileAttributesExA("blinx2_input.rec", GetFileExInfoStandard, &fa)) {
+        char prev[MAX_PATH];
+        FILETIME lt;
+        SYSTEMTIME st;
+        if (!GetFileAttributesExA("blinx2_recomp.log", GetFileExInfoStandard, &fa))
+            GetFileAttributesExA("blinx2_input.rec", GetFileExInfoStandard, &fa);
+        FileTimeToLocalFileTime(&fa.ftLastWriteTime, &lt);
+        FileTimeToSystemTime(&lt, &st);
+        snprintf(prev, sizeof prev,
+                 "blinx2_input.prev-%04u%02u%02u-%02u%02u%02u.rec",
+                 st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        MoveFileExA("blinx2_input.rec", prev, MOVEFILE_REPLACE_EXISTING);
+    }
+    h = FindFirstFileA("blinx2_input.prev-*.rec", &fd);
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+    do {
+        if (n < 64)
+            snprintf(names[n++], MAX_PATH, "%s", fd.cFileName);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    qsort(names, (size_t)n, MAX_PATH, cmp_str);
+    for (i = 0; i + keep < n; i++)
+        DeleteFileA(names[i]);
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nCmdShow)
 {
@@ -893,6 +931,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* Keep the last runs' logs: a crash log used to be overwritten by the
      * next launch, before anyone had read it. */
+    rotate_rec(5);                    /* first: it reads the log's timestamp */
     rotate_log("blinx2_recomp", 5);
     rotate_log("xbox_kernel", 5);
 

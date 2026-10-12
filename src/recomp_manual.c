@@ -219,6 +219,204 @@ void sub_002F89C3(void)
  * `movsx eax, bp` had been lifted as a zero extension. */
 extern void sub_00368457_gen(void);
 
+/* ── Input recording and replay ─────────────────────────────────────────
+ *
+ * Blinx 2 cannot save mid-mission, so a freeze at a mission's end can only
+ * be reached again by playing there. This records what the game itself reads
+ * -- every XInputGetState's XINPUT_STATE and return value, after the pad,
+ * the keyboard merge and XAPI have all had their say -- and plays it back.
+ *
+ * Keyed on the game's own poll sequence, not on time. The game's logic is
+ * frame-locked and polls each opened pad once a frame (sub_0021C290), so
+ * "the Nth XInputGetState" is the same moment of game time in two runs that
+ * reached it the same way, however fast each ran. Anything that changes how
+ * many polls happen before a point (a pad opened at a different poll, a
+ * load that takes a different number of frames) shifts everything after it;
+ * a replay notices a different handle at a recorded poll and says so.
+ *
+ * Recording: on by default in normal (non-headless) runs, to
+ * blinx2_input.rec next to the exe (rotated like the logs by main.c);
+ * RECOMP_INPUT_RECORD=1 forces it, =0 turns it off. Only changes are
+ * written, per pad handle, so a long session of a few thousand presses is a
+ * few hundred KB. Each record is flushed: closing the window ends the
+ * process without running exit handlers.
+ *
+ * Replay: RECOMP_INPUT_REPLAY=<file>. The game's call still runs, then its
+ * result is replaced by the recording's, so the host pad and keyboard are
+ * ignored. Logs [REPLAY] when the last recorded change has been applied, and
+ * any desync (a handle at a poll that the recording had another handle at).
+ *
+ * Format: "BX2INREC", u32 version 1, u32 header length, the header text
+ * (build SHAs, start time, save dir), then 40-byte records:
+ * u32 poll, u32 vblanks-so-far (diagnostic), u32 handle, u32 result,
+ * 22-byte XINPUT_STATE, 2 bytes pad. */
+#ifndef BLINX2_GIT_SHA
+#define BLINX2_GIT_SHA "unknown"
+#endif
+#ifndef XBOXRECOMP_GIT_SHA
+#define XBOXRECOMP_GIT_SHA "unknown"
+#endif
+
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t poll, vbl, handle, result;
+    uint8_t  state[22];
+    uint8_t  pad[2];
+} InputRec;
+#pragma pack(pop)
+
+static volatile uint32_t s_vbl_total;          /* NV2A ISR calls, bumped below */
+static int      s_in_mode = -1;                /* 0 off, 1 record, 2 replay */
+static FILE    *s_in_file;
+static uint32_t s_in_poll;
+static struct { uint32_t handle, result; uint8_t state[22]; } s_in_last[8];
+static InputRec *s_rp;                         /* replay: all records */
+static uint32_t s_rp_n, s_rp_next;
+static int      s_rp_ended, s_rp_desync;
+
+static void input_rec_open(void)
+{
+    const char *rp = getenv("RECOMP_INPUT_REPLAY");
+    const char *rc = getenv("RECOMP_INPUT_RECORD");
+
+    s_in_mode = 0;
+    if (rp && *rp) {
+        FILE *f = fopen(rp, "rb");
+        char magic[8];
+        uint32_t ver = 0, hlen = 0;
+        long size;
+        if (!f || fread(magic, 1, 8, f) != 8 || memcmp(magic, "BX2INREC", 8)
+            || fread(&ver, 4, 1, f) != 1 || fread(&hlen, 4, 1, f) != 1
+            || ver != 1) {
+            fprintf(stderr, "  [REPLAY] cannot read %s as an input recording\n", rp);
+            if (f) fclose(f);
+            return;
+        }
+        {
+            char *hdr = (char *)malloc(hlen + 1);
+            if (hdr && fread(hdr, 1, hlen, f) == hlen) {
+                hdr[hlen] = 0;
+                fprintf(stderr, "  [REPLAY] %s, recorded by:\n%s", rp, hdr);
+            }
+            free(hdr);
+        }
+        fseek(f, 0, SEEK_END);
+        size = ftell(f) - (long)(16 + hlen);
+        fseek(f, 16 + (long)hlen, SEEK_SET);
+        s_rp_n = size > 0 ? (uint32_t)(size / (long)sizeof(InputRec)) : 0;
+        s_rp = (InputRec *)calloc(s_rp_n ? s_rp_n : 1, sizeof(InputRec));
+        s_rp_n = (uint32_t)fread(s_rp, sizeof(InputRec), s_rp_n, f);
+        fclose(f);
+        fprintf(stderr, "  [REPLAY] %u recorded changes, last at poll %u; this "
+                "build: blinx2-recomp %s, xboxrecomp %s\n", s_rp_n,
+                s_rp_n ? s_rp[s_rp_n - 1].poll : 0, BLINX2_GIT_SHA,
+                XBOXRECOMP_GIT_SHA);
+        fflush(stderr);
+        s_in_mode = 2;
+        return;
+    }
+    if (rc ? (*rc == '0') : (getenv("RECOMP_HEADLESS") != NULL))
+        return;
+    s_in_file = fopen("blinx2_input.rec", "wb");
+    if (!s_in_file)
+        return;
+    {
+        char hdr[1024];
+        uint32_t ver = 1, hlen;
+        time_t now = time(NULL);
+        const char *sd = getenv("RECOMP_SAVE_DIR");
+        hlen = (uint32_t)snprintf(hdr, sizeof hdr,
+            "  blinx2-recomp %s, xboxrecomp %s\n  started %s"
+            "  save dir %s (UDATA/TDATA there with RECOMP_SAVE_DIR, else in "
+            "the game dir)\n", BLINX2_GIT_SHA, XBOXRECOMP_GIT_SHA,
+            ctime(&now), sd && *sd ? sd : "(default)");
+        fwrite("BX2INREC", 1, 8, s_in_file);
+        fwrite(&ver, 4, 1, s_in_file);
+        fwrite(&hlen, 4, 1, s_in_file);
+        fwrite(hdr, 1, hlen, s_in_file);
+        fflush(s_in_file);
+    }
+    s_in_mode = 1;
+}
+
+/* After the game's own XInputGetState: record what it got, or replace it. */
+static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
+{
+    uint32_t slot, poll;
+
+    if (s_in_mode < 0)
+        input_rec_open();
+    if (s_in_mode == 0)
+        return;
+    poll = s_in_poll++;
+    if (!state)
+        return;
+
+    if (s_in_mode == 2) {
+        /* Apply every record due at this poll. Records are in poll order. */
+        while (s_rp_next < s_rp_n && s_rp[s_rp_next].poll <= poll) {
+            const InputRec *r = &s_rp[s_rp_next++];
+            for (slot = 0; slot < 8; slot++)
+                if (s_in_last[slot].handle == r->handle || !s_in_last[slot].handle)
+                    break;
+            if (slot < 8) {
+                s_in_last[slot].handle = r->handle;
+                s_in_last[slot].result = r->result;
+                memcpy(s_in_last[slot].state, r->state, 22);
+            }
+        }
+        for (slot = 0; slot < 8; slot++)
+            if (s_in_last[slot].handle == handle)
+                break;
+        if (slot < 8) {
+            /* The gamepad block only. dwPacketNumber stays the live one: XAPI
+             * advances it on every USB report, state change or not, so it
+             * moves the same way in both runs and carries no input. */
+            memcpy((uint8_t *)mem + state + 4, s_in_last[slot].state + 4, 18);
+            g_eax = s_in_last[slot].result;
+        } else if (s_rp_n && !s_rp_desync) {
+            s_rp_desync = 1;
+            fprintf(stderr, "  [REPLAY] DESYNC at poll %u (vblank %u): handle "
+                    "0x%08X was never recorded by this point\n", poll,
+                    s_vbl_total, handle);
+            fflush(stderr);
+        }
+        if (s_rp_next >= s_rp_n && !s_rp_ended) {
+            s_rp_ended = 1;
+            fprintf(stderr, "  [REPLAY] last recorded change applied at poll %u "
+                    "(vblank %u); input holds from here\n", poll, s_vbl_total);
+            fflush(stderr);
+        }
+        return;
+    }
+
+    /* Record: one entry whenever a handle's state or result changes. */
+    for (slot = 0; slot < 8; slot++)
+        if (s_in_last[slot].handle == handle || !s_in_last[slot].handle)
+            break;
+    if (slot == 8)
+        return;
+    /* Compared without dwPacketNumber (the first 4 bytes), which changes on
+     * every report; with it, every poll was a record. */
+    if (s_in_last[slot].handle == handle && s_in_last[slot].result == g_eax
+        && !memcmp(s_in_last[slot].state + 4, mem + state + 4, 18))
+        return;
+    s_in_last[slot].handle = handle;
+    s_in_last[slot].result = g_eax;
+    memcpy(s_in_last[slot].state, mem + state, 22);
+    {
+        InputRec r;
+        memset(&r, 0, sizeof r);
+        r.poll = poll;
+        r.vbl = s_vbl_total;
+        r.handle = handle;
+        r.result = g_eax;
+        memcpy(r.state, mem + state, 22);
+        fwrite(&r, sizeof r, 1, s_in_file);
+        fflush(s_in_file);
+    }
+}
+
 void sub_00368457(void)
 {
     static int trace = -1;
@@ -229,6 +427,7 @@ void sub_00368457(void)
     uint32_t state  = *(const uint32_t *)(mem + g_esp + 8);
 
     sub_00368457_gen();
+    input_rec_poll(mem, handle, state);
 
     if (trace < 0)
         trace = getenv("RECOMP_XINPUT_TRACE") != NULL;
@@ -318,6 +517,7 @@ void sub_002EA2E0(void)
     }
     {
         const uint32_t *vbl = (const uint32_t *)(mem + 0x00AE7388u);
+        s_vbl_total++;
         timing_trace(*vbl);
         sub_002EA2E0_gen();
     }
