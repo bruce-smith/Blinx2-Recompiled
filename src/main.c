@@ -475,8 +475,64 @@ static DWORD WINAPI stderr_flusher(LPVOID unused)
     }
 }
 
+/* RECOMP_OCTREE_WATCH=1: the game's triangle octree (built by sub_001642A0),
+ * watched from outside. Its node pool is 2000 nodes at 0xCAE8A8 (counter
+ * 0xCC9E30, no bounds check -- node 2000 is the counter itself), its
+ * triangle-link pool 60000 at 0xBACB98 (counter 0xCCA048), and a node splits
+ * while it holds more than 50 triangles. A triangle that overlaps every box
+ * -- NaN or enormous vertices -- never thins out, the split never stops, and
+ * the pools overflow into the counters (P3's one-off crash in sub_001645D0).
+ * The triangle store before it is unbounded as well: 8000 records of 0x48 at
+ * 0xC21EA8 (count 0xCC9E2C, sub_00164ED0), ending exactly where the node
+ * pool begins, so a scene with more than 8000 collision triangles overwrites
+ * the nodes. Polls every millisecond: per build, the peak of both counters,
+ * the triangle count, and how many vertex coordinates are non-finite or
+ * beyond the root's +-10000 bounds; loud when a build nears the node limit. */
+static DWORD WINAPI octree_watch_main(LPVOID unused)
+{
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t peak_n = 0, peak_l = 0, last_n = 0, builds = 0, still = 0;
+    int warned = 0;
+    (void)unused;
+    for (;;) {
+        uint32_t n = *(volatile const uint32_t *)(mem + 0xCC9E30);
+        uint32_t l = *(volatile const uint32_t *)(mem + 0xCCA048);
+        still = (n == last_n) ? still + 1 : 0;
+        /* A build is over when its counter stops for half a second, or when
+         * the next one resets it. */
+        if (peak_n && (n < last_n || still == 500)) {
+            uint32_t tris = *(volatile const uint32_t *)(mem + 0xCC9E2C), i, j, bad = 0;
+            if (tris > 8000) tris = 8000;
+            for (i = 0; i < tris; i++)
+                for (j = 0; j < 9; j++) {
+                    float v = *(const float *)(mem + 0xC21EA8 + i * 0x48 + j * 4);
+                    if (!(v > -10000.0f && v < 10000.0f))
+                        bad++;
+                }
+            if (builds++ < 50 || peak_n > 1500)
+                fprintf(stderr, "  [OCTREE] build %u: nodes peak %u/2000, links "
+                        "peak %u/60000, %u/8000 triangles (%u bad coords)\n",
+                        builds, peak_n, peak_l, tris, bad);
+            peak_n = peak_l = 0;
+            warned = 0;
+        }
+        if (n > peak_n) peak_n = n;
+        if (l > peak_l) peak_l = l;
+        if (n >= 1900 && !warned) {
+            warned = 1;
+            fprintf(stderr, "  [OCTREE] node pool at %u/2000 -- about to "
+                    "overflow (links %u, triangles %u)\n", n, l,
+                    *(volatile const uint32_t *)(mem + 0xCC9E2C));
+        }
+        last_n = n;
+        Sleep(1);
+    }
+}
+
 static void memdump_start(void)
 {
+    if (getenv("RECOMP_OCTREE_WATCH"))
+        CloseHandle(CreateThread(NULL, 0, octree_watch_main, NULL, 0, NULL));
     const char *e = getenv("RECOMP_MEMDUMP_SECS");
     if (!e || atoi(e) <= 0) return;
     CloseHandle(CreateThread(NULL, 0, memdump_main,
