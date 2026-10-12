@@ -323,6 +323,29 @@ void sub_002EA2E0(void)
     }
 }
 
+/* D3D's PGRAPH interrupt handler (sub_002EAA50), run from its NV2A DPC
+ * (sub_002EAC90). It acknowledges PGRAPH_INTR (0xFD400100) the hardware way,
+ * by writing back the bits it saw -- write-1-to-clear -- and returns the
+ * register's value after that; the DPC calls it again while that is non-zero.
+ * The aperture here is plain RAM, so the write cleared nothing and the DPC
+ * re-ran the handler, and the notify it dispatches, until something else
+ * zeroed the register. Applying the write-1-to-clear after the generated body
+ * gives the DPC the value it would read on the console. Needed for the
+ * PGRAPH NOTIFY the executor raises (xbox_Nv2aNotify): Blinx 2's fence wait
+ * sleeps on one when the GPU is far behind. */
+extern void sub_002EAA50_gen(void);
+
+void sub_002EAA50(void)
+{
+    volatile uint32_t *intr =
+        (volatile uint32_t *)(uintptr_t)(g_xbox_mem_offset + 0xFD400100u);
+    uint32_t seen = *intr;
+
+    sub_002EAA50_gen();
+    *intr &= ~seen;
+    g_eax = *intr;
+}
+
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
     if (xbox_va == 0x000604A0u)
