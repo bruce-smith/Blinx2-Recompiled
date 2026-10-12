@@ -768,6 +768,46 @@ static LONG WINAPI fatal_filter(PEXCEPTION_POINTERS ep)
 
 /* ── WinMain ───────────────────────────────────────────────── */
 
+/* <base>.log -> <base>.prev-<its last write time>.log, keeping the newest
+ * `keep` of those. In the working directory, before anything opens the log. */
+static int cmp_str(const void *a, const void *b)
+{
+    return strcmp((const char *)a, (const char *)b);
+}
+
+static void rotate_log(const char *base, int keep)
+{
+    char cur[MAX_PATH], prev[MAX_PATH], pat[MAX_PATH];
+    static char names[64][MAX_PATH];
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    int n = 0, i;
+
+    snprintf(cur, sizeof cur, "%s.log", base);
+    if (GetFileAttributesExA(cur, GetFileExInfoStandard, &fa)) {
+        FILETIME lt;
+        SYSTEMTIME st;
+        FileTimeToLocalFileTime(&fa.ftLastWriteTime, &lt);
+        FileTimeToSystemTime(&lt, &st);
+        snprintf(prev, sizeof prev, "%s.prev-%04u%02u%02u-%02u%02u%02u.log", base,
+                 st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        MoveFileExA(cur, prev, MOVEFILE_REPLACE_EXISTING);
+    }
+    snprintf(pat, sizeof pat, "%s.prev-*.log", base);
+    h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+    do {
+        if (n < 64)
+            snprintf(names[n++], MAX_PATH, "%s", fd.cFileName);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    qsort(names, (size_t)n, MAX_PATH, cmp_str);   /* oldest first: timestamped */
+    for (i = 0; i + keep < n; i++)
+        DeleteFileA(names[i]);
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nCmdShow)
 {
@@ -794,6 +834,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             }
         }
     }
+
+    /* Keep the last runs' logs: a crash log used to be overwritten by the
+     * next launch, before anyone had read it. */
+    rotate_log("blinx2_recomp", 5);
+    rotate_log("xbox_kernel", 5);
 
     /* Launched by double-click there is no console and no redirection, so
      * stderr goes nowhere and a crash leaves no trace. Write it to
