@@ -21,6 +21,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>         /* getenv */
+#include <string.h>         /* memcmp */
+#include <time.h>           /* clock */
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
 
@@ -88,6 +90,55 @@ extern ptrdiff_t g_xbox_mem_offset;
  *       g_eax = result;
  *   }
  */
+
+/* RECOMP_TIMING_TRACE=1: once a host second, how many vblanks and frames
+ * the title saw, and the frame interval it asked for. Sampled around D3D's
+ * NV2A ISR (sub_002EA2E0 below), because the seeded generated sub_000604A0
+ * runs instead of the callback below, and that runs from the DPC the ISR
+ * queues. So this counts ISR calls (raised vblanks); the main loop zeroes
+ * the counter at the top of each frame, so a drop in it is a new frame.
+ * [0x3FD344] is the vblanks-per-frame target and [0x4AC760] the step
+ * the game logic advances by. */
+static void timing_trace(uint32_t counter)
+{
+    static int on = -1;
+    static uint32_t vbl, frames, last, peak;
+    static long t0;
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    long now;
+
+    if (on < 0)
+        on = getenv("RECOMP_TIMING_TRACE") != NULL;
+    if (!on)
+        return;
+    vbl++;
+    if (counter < last)
+        frames++;
+    if (counter > peak)
+        peak = counter;
+    last = counter;
+    now = (long)(clock() * 1000L / CLOCKS_PER_SEC);   /* wall time on MSVC */
+    if (!t0)
+        t0 = now;
+    if (now - t0 >= 1000) {
+        /* [0x4B762C]: ADXM's vsync-thread count (sub_002A1B20), one per
+         * D3D BlockUntilVerticalBlank; Sofdec times video-only movies by it. */
+        static uint32_t adxm_last;
+        uint32_t adxm = *(const uint32_t *)(mem + 0x4B762C);
+        fprintf(stderr, "  [TIMING] %ld ms: %u vblanks, %u frames (peak count %u); "
+                "interval [3FD344]=%u step [4AC760]=%u phase [EC4BF8]=%u "
+                "cpu [AE71A4]=%u adxm vsyncs +%u\n", now - t0, vbl, frames, peak,
+                *(const uint32_t *)(mem + 0x3FD344),
+                *(const uint32_t *)(mem + 0x4AC760),
+                *(const uint32_t *)(mem + 0xEC4BF8),
+                *(const uint32_t *)(mem + 0xAE71A4), adxm - adxm_last);
+        fflush(stderr);
+        adxm_last = adxm;
+        vbl = frames = peak = 0;
+        t0 = now;
+    }
+}
+
 /* The title's vertical-blank callback, 0x000604A0:
  *
  *     mov eax, [0x00AE7388]
@@ -156,13 +207,20 @@ void sub_002F89C3(void)
  * (0x48F). RECOMP_XINPUT_TRACE=1 logs the first call per handle and every
  * change of packet number + buttons, so "the pad reports Start but the title
  * does not move" can be split into "the title never reads it" and "it reads
- * it and ignores it". */
+ * it and ignores it".
+ *
+ * Sticks too: a change of either stick is logged with the raw XINPUT axes
+ * (state+0x0E..0x14) and the floats the game's pad poll (sub_0021C290) made
+ * of pad 0 last time, at 0xEBD28C LX LY RX RY, nominally -1..1. That is how
+ * the right stick's Y was caught reading +1..+2 for "down": the poll's
+ * `movsx eax, bp` had been lifted as a zero extension. */
 extern void sub_00368457_gen(void);
 
 void sub_00368457(void)
 {
     static int trace = -1;
     static uint32_t last_handle, last_buttons, calls;
+    static int16_t last_sticks[4];
     const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
     uint32_t handle = *(const uint32_t *)(mem + g_esp + 4);
     uint32_t state  = *(const uint32_t *)(mem + g_esp + 8);
@@ -187,6 +245,16 @@ void sub_00368457(void)
                     *(const uint32_t *)(mem + handle + 0xA3));
             last_handle = handle;
             last_buttons = buttons;
+        }
+        {
+            const int16_t *ax = (const int16_t *)(mem + state + 0x0E);
+            const float *f = (const float *)(mem + 0x00EBD28Cu);
+            if (memcmp(ax, last_sticks, sizeof last_sticks) != 0) {
+                fprintf(stderr, "  [XINPUT] sticks L=(%d,%d) R=(%d,%d); game's "
+                        "pad 0 last poll L=(%.3f,%.3f) R=(%.3f,%.3f)\n",
+                        ax[0], ax[1], ax[2], ax[3], f[0], f[1], f[2], f[3]);
+                memcpy(last_sticks, ax, sizeof last_sticks);
+            }
         }
     }
 }
@@ -245,7 +313,11 @@ void sub_002EA2E0(void)
                 edi_ ? *(const uint32_t *)(mem + edi_ + 0x100) : 0);
 #undef F
     }
-    sub_002EA2E0_gen();
+    {
+        const uint32_t *vbl = (const uint32_t *)(mem + 0x00AE7388u);
+        timing_trace(*vbl);
+        sub_002EA2E0_gen();
+    }
 }
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
