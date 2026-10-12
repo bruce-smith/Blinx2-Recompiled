@@ -399,6 +399,14 @@ static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
         return;
 
     if (s_in_mode == 2) {
+        /* RECOMP_INPUT_REPLAY_THEN_LIVE=1: once the recording is used up,
+         * hand the pad back (the host pad, the keyboard, RECOMP_PAD_LIVE) --
+         * replay to a point, then drive by hand or script from there. */
+        static int then_live = -1;
+        if (then_live < 0)
+            then_live = getenv("RECOMP_INPUT_REPLAY_THEN_LIVE") != NULL;
+        if (then_live && s_rp_ended)
+            return;
         /* Apply every record due at this poll. Records are in poll order. */
         while (s_rp_next < s_rp_n && s_rp[s_rp_next].poll <= poll) {
             const InputRec *r = &s_rp[s_rp_next++];
@@ -430,7 +438,10 @@ static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
         if (s_rp_next >= s_rp_n && !s_rp_ended) {
             s_rp_ended = 1;
             fprintf(stderr, "  [REPLAY] last recorded change applied at poll %u "
-                    "(vblank %u); input holds from here\n", poll, s_vbl_total);
+                    "(vblank %u); %s\n", poll, s_vbl_total,
+                    getenv("RECOMP_INPUT_REPLAY_THEN_LIVE")
+                        ? "live input from the next poll"
+                        : "input holds from here");
             fflush(stderr);
         }
         return;
