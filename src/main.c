@@ -397,6 +397,63 @@ static DWORD WINAPI dsp_doorbell_main(LPVOID unused)
     }
 }
 
+/* DirectSound's timer list, when its DPC spins (results-screen freeze).
+ *
+ * The timer DPC 0x00334A70 -> sub_003348A8 walks a list at ctx+0x4A8, sorted
+ * by absolute due time: it reads the clock, and if the head entry is due it
+ * unlinks it and calls [entry+0xC]->vtbl[0x24](entry+0x10, entry+0x14);
+ * otherwise it re-arms the KTIMER at ctx+0x4E8 and returns. One clock read per
+ * pass, so the runtime's [DPCSPIN] count is this loop's iteration count.
+ * Entries are 32-byte slots at owner+0x88 (owner vtable 0x36F584, timer ids
+ * 0..5): +0 Flink, +4 Blink, +8 flags (2 = queued, 4 = periodic), +0xC owner,
+ * +0x10 id, +0x14 arg, +0x18 due. It can only loop forever if an entry
+ * stays due at the head -- a corrupt link or a callback that re-queues it --
+ * so this prints the links, checks each Blink, and stops at a repeat. */
+#define DS_TIMER_DPC 0x00334A70u
+
+static void dsound_timer_spin_hook(uint32_t dpc_va, uint32_t routine,
+                                   uint32_t ctx, unsigned clock_reads)
+{
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t head, e, prev, seen[32];
+    LARGE_INTEGER now;
+    unsigned n = 0, i;
+
+    (void)dpc_va; (void)clock_reads;
+    if (routine != DS_TIMER_DPC || !guest_ptr_ok(ctx))
+        return;
+    xbox_KeQuerySystemTime(&now);
+#define G32(a) (*(const uint32_t *)(mem + (a)))
+    head = ctx + 0x4A8;
+    fprintf(stderr, "  [DSTIMER] ctx 0x%08X now %08X:%08X head 0x%08X Flink %08X"
+            " Blink %08X; immediate list Flink %08X\n", ctx,
+            (uint32_t)(now.QuadPart >> 32), (uint32_t)now.QuadPart, head,
+            G32(head), G32(head + 4), G32(ctx + 0x4B0));
+    for (prev = head, e = G32(head); e != head && n < 32; prev = e, e = G32(e)) {
+        long long due;
+        if (!guest_ptr_ok(e)) {
+            fprintf(stderr, "  [DSTIMER]   bad link 0x%08X after 0x%08X\n", e, prev);
+            break;
+        }
+        for (i = 0; i < n; i++)
+            if (seen[i] == e)
+                break;
+        due = (long long)(((uint64_t)G32(e + 0x1C) << 32) | G32(e + 0x18));
+        fprintf(stderr, "  [DSTIMER]   0x%08X F %08X B %08X%s flags %X owner %08X"
+                " (vtbl %08X) id %u arg %08X due %+lld us%s\n", e, G32(e),
+                G32(e + 4), G32(e + 4) == prev ? "" : " (Blink != prev!)",
+                G32(e + 8), G32(e + 0xC),
+                guest_ptr_ok(G32(e + 0xC)) ? G32(G32(e + 0xC)) : 0,
+                G32(e + 0x10), G32(e + 0x14), (due - now.QuadPart) / 10,
+                i < n ? " REPEAT: list is cyclic" : "");
+        if (i < n)
+            break;
+        seen[n++] = e;
+    }
+#undef G32
+    fflush(stderr);
+}
+
 static void dsp_doorbell_start(void)
 {
     if (getenv("RECOMP_DSP_ACK"))
@@ -1188,6 +1245,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     sampler_start();
     memdump_start();
     dsp_doorbell_start();
+    xbox_SetDpcSpinHook(dsound_timer_spin_hook);
     gpu_idle_start();
 
     /* After the XBE load, which titles the window from the certificate
