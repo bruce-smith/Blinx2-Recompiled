@@ -410,7 +410,8 @@ static void dsp_doorbell_start(void)
  * until NV2A register 0x400B10 (bits 2-6) agrees with gpu << 2; the runtime's
  * aperture is plain RAM, so echo that too. Nothing is drawn by this. It only
  * lets the title stop waiting for a GPU that does not exist yet.
- * RECOMP_GPU_IDLE_SHIM=0 turns it off (e.g. with RECOMP_PB_EXEC). */
+ * RECOMP_GPU_IDLE_SHIM=0 turns it off. Under RECOMP_PB_EXEC (the default)
+ * it is not started: the executor releases the fences (gpu_idle_start). */
 static DWORD WINAPI gpu_idle_main(LPVOID unused)
 {
     const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
@@ -442,6 +443,16 @@ static void gpu_idle_start(void)
     const char *e = getenv("RECOMP_GPU_IDLE_SHIM");
     if (e && *e == '0')
         return;
+    /* With the pushbuffer executor the fences are real: the stream's
+     * semaphore releases ([dev+0x30] is where D3D points the semaphore DMA
+     * object) are written as the executor reaches them. The shim's 1 ms poll
+     * held the title in sub_002E8110 for a fifth of its time, and reporting
+     * fences complete before the executor got there let the title reuse
+     * buffers the GPU had not read yet. RECOMP_GPU_IDLE_SHIM=1 forces it. */
+    if (getenv("RECOMP_PB_EXEC") && !(e && *e == '1')) {
+        xbox_Nv2aSemaphoreAt(0x002F1FB8u, 0x30);
+        return;
+    }
     CloseHandle(CreateThread(NULL, 0, gpu_idle_main, NULL, 0, NULL));
 }
 
