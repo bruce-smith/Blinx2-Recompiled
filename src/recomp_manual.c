@@ -346,6 +346,52 @@ static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
 
     if (s_in_mode < 0)
         input_rec_open();
+    {   /* RECOMP_INPUT_TRACE=1: the main loop's mode ([0xAE73F0] & 0x7F) at
+         * each change, with the poll count -- for finding where a replay's
+         * timing anchors. */
+        static int tr = -1;
+        static uint32_t last_mode = 0xFFFFFFFFu, n;
+        if (tr < 0)
+            tr = getenv("RECOMP_INPUT_TRACE") != NULL;
+        if (tr) {
+            uint32_t mode = *(const uint32_t *)(mem + 0xAE73F0) & 0x7F;
+            if (mode != last_mode) {
+                fprintf(stderr, "  [INPUT] poll %u vblank %u: mode %u -> %u\n",
+                        s_in_poll, s_vbl_total, last_mode, mode);
+                last_mode = mode;
+            }
+            if ((++n % 600) == 0)
+                fprintf(stderr, "  [INPUT] poll %u vblank %u\n", s_in_poll, s_vbl_total);
+        }
+    }
+    {   /* RECOMP_INPUT_SNAP=<poll>,<file>: write the game image's memory
+         * (0x10000-0x1040000: code, .data and BSS) at that poll, for diffing
+         * two replays to find where game state first diverges. */
+        static int sp = -1;
+        static uint32_t snap_poll;
+        static char snap_file[260];
+        if (sp < 0) {
+            const char *s = getenv("RECOMP_INPUT_SNAP");
+            const char *c = s ? strchr(s, ',') : NULL;
+            sp = 0;
+            if (c) {
+                snap_poll = (uint32_t)strtoul(s, NULL, 0);
+                snprintf(snap_file, sizeof snap_file, "%s", c + 1);
+                sp = 1;
+            }
+        }
+        if (sp == 1 && s_in_poll == snap_poll) {
+            FILE *f = fopen(snap_file, "wb");
+            sp = 2;
+            if (f) {
+                fwrite(mem + 0x10000, 1, 0x1030000, f);
+                fclose(f);
+                fprintf(stderr, "  [INPUT] snapshot at poll %u (vblank %u) -> %s\n",
+                        s_in_poll, s_vbl_total, snap_file);
+                fflush(stderr);
+            }
+        }
+    }
     if (s_in_mode == 0)
         return;
     poll = s_in_poll++;
