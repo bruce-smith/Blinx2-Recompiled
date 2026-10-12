@@ -236,8 +236,17 @@ static DWORD WINAPI sampler_main(LPVOID param)
         }
         ResumeThread(s_sample_target);
         if (GetTickCount() - last >= 30000) {
+            static int window = -1;
             last = GetTickCount();
             sample_report(total);
+            /* RECOMP_SAMPLE_WINDOW=1: each report covers only the last 30 s,
+             * so a steady scene (the hub) is not diluted by boot and menus. */
+            if (window < 0)
+                window = getenv("RECOMP_SAMPLE_WINDOW") != NULL;
+            if (window) {
+                memset(s_samples, 0, sizeof s_samples);
+                total = 0;
+            }
         }
     }
 }
