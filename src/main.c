@@ -981,7 +981,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 4: Set game directory for file I/O path translation */
     {
         extern void xbox_path_init(const char *game_dir, const char *save_dir);
-        xbox_path_init(BLINX_2_DIR, NULL);
+        /* RECOMP_SAVE_DIR moves saves and the Z: cache away from
+         * %LOCALAPPDATA%\xboxrecomp, e.g. for a cold-cache test run that
+         * must not touch the cache a running copy is using. */
+        xbox_path_init(BLINX_2_DIR, getenv("RECOMP_SAVE_DIR"));
     }
 
     /* Step 5: Initialize kernel bridge (thunk table in Xbox memory) */
