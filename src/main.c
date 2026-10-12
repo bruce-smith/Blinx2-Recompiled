@@ -849,6 +849,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 _putenv_s(on[i], "1");
     }
 
+    /* Sound: the emulated APU (RECOMP_AC97_READY: trap its registers, run the
+     * voice processor, play through XAudio2). On by default in the playable
+     * exe; RECOMP_AUDIO=0 turns it off. Headless runs stay silent unless they
+     * set RECOMP_AUDIO=1 (or RECOMP_AC97_READY), so scripted runs keep their
+     * timing and do not play sound over whatever the human is doing. */
+    {
+        const char *a = getenv("RECOMP_AUDIO");
+        int want = a ? (*a != '0') : !s_headless;
+        if (want && !getenv("RECOMP_AC97_READY"))
+            _putenv_s("RECOMP_AC97_READY", "1");
+    }
+
     /* Contiguous memory must be reclaimable. The title scene frees its
      * MmAllocateContiguousMemory blocks and the attract stage allocates new
      * ones; with the default bump allocator the 64 MB window runs out right
