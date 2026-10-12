@@ -127,11 +127,14 @@ static void timing_trace(uint32_t counter)
         uint32_t adxm = *(const uint32_t *)(mem + 0x4B762C);
         fprintf(stderr, "  [TIMING] %ld ms: %u vblanks, %u frames (peak count %u); "
                 "interval [3FD344]=%u step [4AC760]=%u phase [EC4BF8]=%u "
-                "cpu [AE71A4]=%u adxm vsyncs +%u\n", now - t0, vbl, frames, peak,
+                "cpu [AE71A4]=%u adxm vsyncs +%u usb bw %u/%u %u/%u\n",
+                now - t0, vbl, frames, peak,
                 *(const uint32_t *)(mem + 0x3FD344),
                 *(const uint32_t *)(mem + 0x4AC760),
                 *(const uint32_t *)(mem + 0xEC4BF8),
-                *(const uint32_t *)(mem + 0xAE71A4), adxm - adxm_last);
+                *(const uint32_t *)(mem + 0xAE71A4), adxm - adxm_last,
+                *(const uint16_t *)(mem + 0xF2E0E2), *(const uint16_t *)(mem + 0xF2E0E0),
+                *(const uint16_t *)(mem + 0xF2E0E6), *(const uint16_t *)(mem + 0xF2E0E4));
         fflush(stderr);
         adxm_last = adxm;
         vbl = frames = peak = 0;
