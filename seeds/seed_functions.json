@@ -208,5 +208,10 @@
     "start": "0x000C15C0",
     "observed": true,
     "note": "Indirect-call target observed in the hub level (mgtu_ts) after the opening movie (753 failed ICALLs). Gap 0x000C15C0-0x000C1600."
+  },
+  {
+    "start": "0x000EF540",
+    "observed": true,
+    "note": "Indirect-call target observed at runtime in stage 01-01 ([ICALL] Failed to resolve VA 0x000EF540, 96x across the human's logs); decodes as a function body after sub_000EF4E0's ret. Load-completion callback: decrements the pending count [0xB8BBB0] and sets [0x41158C] when it reaches 0 -- skipped, the mission summary never appears."
   }
 ]
