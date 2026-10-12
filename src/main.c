@@ -857,6 +857,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (!getenv("RECOMP_HEAP_RECLAIM"))
         _putenv_s("RECOMP_HEAP_RECLAIM", "1");
 
+    /* Events the title builds itself must block. D3D's BlockUntilVerticalBlank
+     * (sub_002E0DB0) zeroes SignalState of the KEVENT at device+0x1DBC by a
+     * plain write and waits on it; without RECOMP_TITLE_KEVENTS the runtime
+     * waits on the guest address as if it were a Win32 handle, which fails at
+     * once. CRI's ADXM vsync thread (sub_002A1B20) waits there every pass, so
+     * it ran ~80,000 times a second instead of 60, and Sofdec, which times
+     * movies without an audio track by those vsyncs, played the title and
+     * menu loops (title_movie_1a/2a.sfd, 6 s each, where the spinning crystal
+     * is) about 17x too fast while spinning a host core. Movies with audio
+     * sync to the audio and were unaffected. Set only when unset, like the two
+     * above (the runtime wants it to be "1"); =0 turns it off. */
+    if (!getenv("RECOMP_TITLE_KEVENTS"))
+        _putenv_s("RECOMP_TITLE_KEVENTS", "1");
+
     /* The DirectSound GP-DSP doorbell is acked by a thread started later, once
      * guest memory exists; see dsp_doorbell_start(). */
 
