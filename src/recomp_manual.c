@@ -603,6 +603,76 @@ void sub_002EAA50(void)
     g_eax = *intr;
 }
 
+/* The collision octree's subdivision, guarded against its own pools.
+ *
+ * sub_001645A0(node) splits a node holding more than 50 triangles into 8
+ * children taken from a fixed pool of 2000 nodes at 0xCAE8A8 (count
+ * 0xCC9E30) and links each triangle into every child it overlaps, from a
+ * pool of 60000 links at 0xBACB98 (count 0xCCA048). Neither pool is bounds
+ * checked, and node 2000 is the node counter itself, so an overflow rewrites
+ * the counter and the tree's pointers and the next walk crashes (P3 saw it
+ * in sub_001645D0). Stage 01-01 alone peaks at 1161/2000 nodes and
+ * 46107/60000 links, so a larger stage can overflow with valid input.
+ *
+ * When the 8 children, or up to 8 links for each of the node's triangles,
+ * would not fit, the node is left a leaf: collision queries over it test
+ * more triangles, and are still correct. This changes nothing until the game
+ * would otherwise corrupt memory. Logged once, with the counts.
+ *
+ * cdecl (node); its own recursion calls this symbol too, so every level is
+ * guarded. Needs the recomp run with --exclude-manual (emits
+ * sub_001645A0_gen). */
+extern void sub_001645A0_gen(void);
+
+void sub_001645A0(void)
+{
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t node  = *(const uint32_t *)(mem + g_esp + 4);
+    uint32_t count = *(const uint32_t *)(mem + node + 0x24);
+
+    {   /* How close each build came: the counters restart from 0 for every
+         * build (sub_001642A0), so a drop means the previous build is done.
+         * One line per build, printed when the next one starts. */
+        static uint32_t peak_n, peak_l, last_n, builds;
+        uint32_t n = *(const uint32_t *)(mem + 0xCC9E30);
+        uint32_t l = *(const uint32_t *)(mem + 0xCCA048);
+        if (n < last_n && peak_n) {
+            fprintf(stderr, "  [OCTREE] build %u peaked at %u/2000 nodes, "
+                    "%u/60000 links\n", ++builds, peak_n, peak_l);
+            peak_n = peak_l = 0;
+        }
+        if (n > peak_n) peak_n = n;
+        if (l > peak_l) peak_l = l;
+        last_n = n;
+    }
+
+    if ((int32_t)count > 50) {
+        /* RECOMP_OCTREE_TEST_NODES / _LINKS lower the limits, to exercise
+         * this path on a stage that fits. */
+        static uint32_t max_n, max_l;
+        uint32_t nodes = *(const uint32_t *)(mem + 0xCC9E30);
+        uint32_t links = *(const uint32_t *)(mem + 0xCCA048);
+        if (!max_n) {
+            const char *a = getenv("RECOMP_OCTREE_TEST_NODES");
+            const char *b = getenv("RECOMP_OCTREE_TEST_LINKS");
+            max_n = (a && atoi(a) > 8 && atoi(a) < 2000) ? (uint32_t)atoi(a) : 2000;
+            max_l = (b && atoi(b) > 0 && atoi(b) < 60000) ? (uint32_t)atoi(b) : 60000;
+        }
+        if (nodes + 8 > max_n || (uint64_t)links + (uint64_t)count * 8 > max_l) {
+            static int warned;                  /* main thread only */
+            if (!warned++) {
+                fprintf(stderr, "  [OCTREE] pool full: not splitting node 0x%08X "
+                        "(%u triangles); nodes %u/2000, links %u/60000 -- it "
+                        "stays a leaf (logged once)\n", node, count, nodes, links);
+                fflush(stderr);
+            }
+            g_esp += 4;                         /* ret */
+            return;
+        }
+    }
+    sub_001645A0_gen();
+}
+
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
     if (xbox_va == 0x000604A0u)
