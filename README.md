@@ -33,8 +33,8 @@ the Subspace Dive gadget).
   are not emulated; Blinx 2 does not appear to use them.
 - **Input:** keyboard and XInput pads.
 - **Saves** work.
-- **Known issues:** frame rate drops in busy scenes (the rain stage runs
-  around 20 fps); later parts of the game are largely untested. Rendering is
+- **Known issues:** busy scenes such as the rainy stage 01-03 can still dip
+  into the low 20s fps; later parts of the game are largely untested. Rendering is
   done on the CPU, so a slow or low-core-count CPU gives a low frame rate.
 
 ## Legal
