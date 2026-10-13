@@ -29,6 +29,10 @@ __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
 __declspec(dllimport) void __stdcall Sleep(unsigned long ms);
 __declspec(dllimport) unsigned long long __stdcall GetTickCount64(void);
 extern void xbox_SetVblankGate(int (*gate)(int due));
+/* A replay of a recorded guest-CPU schedule (xboxrecomp kernel/sched.c)
+ * reproduces everything the v2 events below do, and their waits would hold
+ * the guest CPU: they stand down for it. */
+extern int xbox_SchedReplaying(void);
 extern void xbox_VblankKick(void);
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
@@ -449,12 +453,12 @@ static void input_rec_open(void)
                     memcpy(&s_ev_dev[s_ev_dev_n++], s_rp[i].state, sizeof(DevChg));
             {   /* RECOMP_REPLAY_THREADS=0: thread completions as they come */
                 const char *g = getenv("RECOMP_REPLAY_THREADS");
-                if (g && *g == '0')
+                if ((g && *g == '0') || xbox_SchedReplaying())
                     s_ev_done_n = 0;
             }
             {   /* RECOMP_REPLAY_LOADING=0: leave the loading screens' lengths free */
                 const char *g = getenv("RECOMP_REPLAY_LOADING");
-                if (g && *g == '0')
+                if ((g && *g == '0') || xbox_SchedReplaying())
                     s_ev_load_n = 0;
             }
             fprintf(stderr, "  [REPLAY] version %u, %u loading screens recorded%s\n",
@@ -473,7 +477,7 @@ static void input_rec_open(void)
                     if (end > top)
                         top = end;
                 }
-            if (top && !(g && *g == '0')) {
+            if (top && !(g && *g == '0') && !xbox_SchedReplaying()) {
                 s_vb_at = (uint32_t *)calloc(top, sizeof(uint32_t));
                 for (i = 0; i < s_rp_n && s_vb_at; i++) {
                     const InputRec *r = &s_rp[i];
@@ -685,6 +689,38 @@ static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
             }
             fwrite(page_hash, 4, 0x3FF0, hf);
             fflush(hf);
+            {   /* RECOMP_INPUT_HASH_PAGES=<va>[+<va>...]: those 4 KB pages
+                 * raw, to <file>.pages, at each checkpoint -- for naming the
+                 * dwords behind a page whose hash differs between runs. */
+                static int np = -1;
+                static uint32_t pages[8];
+                static FILE *pf;
+                if (np < 0) {
+                    const char *e = getenv("RECOMP_INPUT_HASH_PAGES");
+                    char *q = (char *)e;
+                    np = 0;
+                    while (q && *q && np < 8) {
+                        pages[np++] = (uint32_t)strtoul(q, &q, 0) & ~0xFFFu;
+                        if (*q == '+')
+                            q++;
+                        else
+                            break;
+                    }
+                    if (np) {
+                        char fn[280];
+                        snprintf(fn, sizeof fn, "%s.pages",
+                                 strchr(getenv("RECOMP_INPUT_HASH"), ',') + 1);
+                        pf = fopen(fn, "wb");
+                    }
+                }
+                if (pf) {
+                    int k;
+                    fwrite(&s_in_poll, 4, 1, pf);
+                    for (k = 0; k < np; k++)
+                        fwrite(mem + pages[k], 1, 4096, pf);
+                    fflush(pf);
+                }
+            }
         }
     }
     {   /* RECOMP_INPUT_SNAP=<poll>[+<poll>...],<file>: write guest memory
@@ -1094,7 +1130,7 @@ void sub_00367F0E(void)
     sub_00367F0E_gen();
     if (devgate < 0) {
         const char *g = getenv("RECOMP_REPLAY_DEVICES");
-        devgate = !(g && *g == '0');
+        devgate = !(g && *g == '0') && !xbox_SchedReplaying();
     }
     if (s_main_tid && (long)GetCurrentThreadId() == s_main_tid) {
         uint32_t n = s_dev_calls++;

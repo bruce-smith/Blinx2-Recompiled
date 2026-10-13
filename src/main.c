@@ -45,6 +45,12 @@
 #include <xbox/xboxrecomp.h>
 #include "ohci.h"          /* xbox_usb: USB host controller model */
 
+/* The guest-CPU schedule (xboxrecomp kernel/sched.c). */
+extern int  xbox_SchedMode(void);
+extern void xbox_SchedAddTick(void (*fn)(void));
+extern void xbox_SchedAddPump(void (*fn)(void));
+extern void xbox_SchedFlush(void);
+
 /*
  * If xboxrecomp.h is not an umbrella header in your setup, include
  * the individual headers directly:
@@ -347,53 +353,58 @@ static int guest_ptr_ok(uint32_t va)
         || (va >= 0x80000000u && va < 0x84000000u);
 }
 
-static DWORD WINAPI dsp_doorbell_main(LPVOID unused)
+static void dsp_doorbell_pass(void)
 {
     static const uint32_t chain[] = { 0x04, 0x14, 0x08, 0x10, 0x00 };
+    static uint32_t last, last_root;
+    static unsigned acks;
     const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
-    uint32_t last = 0;
-    unsigned acks = 0;
-    uint32_t last_root = 0;
-    (void)unused;
+    uint32_t p = *(volatile const uint32_t *)(mem + 0x00EC4C0Cu);
+    size_t i;
 
-    fprintf(stderr, "[DSP] doorbell watcher running (mem=%p)\n", (void *)mem);
+    if (p != last_root) {               /* log each new chain once */
+        uint32_t q = p;
+        fprintf(stderr, "[DSP] chain root 0x%08X", q);
+        for (i = 0; i < sizeof(chain) / sizeof(chain[0]) && guest_ptr_ok(q); i++) {
+            q = *(volatile const uint32_t *)(mem + q + chain[i]);
+            fprintf(stderr, " -> 0x%08X", q);
+        }
+        fprintf(stderr, "\n");
+        last_root = p;
+    }
+    for (i = 0; i < sizeof(chain) / sizeof(chain[0]) && guest_ptr_ok(p); i++)
+        p = *(volatile const uint32_t *)(mem + p + chain[i]);
+    if (i < sizeof(chain) / sizeof(chain[0]) || !guest_ptr_ok(p)) {
+        static size_t shown_i = (size_t)-1;
+        static uint32_t shown_p;
+        if (p && (i != shown_i || p != shown_p)) {
+            fprintf(stderr, "[DSP] doorbell chain stops at step %u: 0x%08X\n",
+                    (unsigned)i, p);
+            shown_i = i;
+            shown_p = p;
+        }
+        return;                         /* DirectSound not up yet */
+    }
+    p += 0x810;
+    if (p != last) {
+        fprintf(stderr, "[DSP] DirectSound doorbell at 0x%08X\n", p);
+        last = p;
+    }
+    if (*(volatile uint32_t *)(uintptr_t)(mem + p)) {
+        *(volatile uint32_t *)(uintptr_t)(mem + p) = 0;
+        if (++acks <= 3)
+            fprintf(stderr, "[DSP] doorbell command acknowledged\n");
+    }
+}
+
+static DWORD WINAPI dsp_doorbell_main(LPVOID unused)
+{
+    (void)unused;
+    fprintf(stderr, "[DSP] doorbell watcher running (mem=%p)\n",
+            (void *)(uintptr_t)g_xbox_mem_offset);
     for (;;) {
-        uint32_t p = *(volatile const uint32_t *)(mem + 0x00EC4C0Cu);
-        size_t i;
-        if (p != last_root) {               /* log each new chain once */
-            uint32_t q = p;
-            fprintf(stderr, "[DSP] chain root 0x%08X", q);
-            for (i = 0; i < sizeof(chain) / sizeof(chain[0]) && guest_ptr_ok(q); i++) {
-                q = *(volatile const uint32_t *)(mem + q + chain[i]);
-                fprintf(stderr, " -> 0x%08X", q);
-            }
-            fprintf(stderr, "\n");
-            last_root = p;
-        }
         Sleep(10);
-        for (i = 0; i < sizeof(chain) / sizeof(chain[0]) && guest_ptr_ok(p); i++)
-            p = *(volatile const uint32_t *)(mem + p + chain[i]);
-        if (i < sizeof(chain) / sizeof(chain[0]) || !guest_ptr_ok(p)) {
-            static size_t shown_i = (size_t)-1;
-            static uint32_t shown_p;
-            if (p && (i != shown_i || p != shown_p)) {
-                fprintf(stderr, "[DSP] doorbell chain stops at step %u: 0x%08X\n",
-                        (unsigned)i, p);
-                shown_i = i;
-                shown_p = p;
-            }
-            continue;                       /* DirectSound not up yet */
-        }
-        p += 0x810;
-        if (p != last) {
-            fprintf(stderr, "[DSP] DirectSound doorbell at 0x%08X\n", p);
-            last = p;
-        }
-        if (*(volatile uint32_t *)(uintptr_t)(mem + p)) {
-            *(volatile uint32_t *)(uintptr_t)(mem + p) = 0;
-            if (++acks <= 3)
-                fprintf(stderr, "[DSP] doorbell command acknowledged\n");
-        }
+        dsp_doorbell_pass();
     }
 }
 
@@ -504,6 +515,13 @@ static void dsp_doorbell_start(void)
 {
     if (getenv("RECOMP_DSP_ACK"))
         return;
+    /* Under a guest-CPU schedule the runtime runs it: at every timer turn,
+     * and at the yield point of DirectSound's own spin (sub_003341BE). */
+    if (xbox_SchedMode()) {
+        xbox_SchedAddTick(dsp_doorbell_pass);
+        xbox_SchedAddPump(dsp_doorbell_pass);
+        return;
+    }
     CloseHandle(CreateThread(NULL, 0, dsp_doorbell_main, NULL, 0, NULL));
 }
 
@@ -524,29 +542,34 @@ static void dsp_doorbell_start(void)
  * lets the title stop waiting for a GPU that does not exist yet.
  * RECOMP_GPU_IDLE_SHIM=0 turns it off. Under RECOMP_PB_EXEC (the default)
  * it is not started: the executor releases the fences (gpu_idle_start). */
+static void gpu_idle_pass(void)
+{
+    static unsigned announced;
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t dev, gp, cpu, gpu;
+
+    dev = *(volatile const uint32_t *)(mem + 0x002F1FB8u);
+    if (!guest_ptr_ok(dev))
+        return;
+    gp = *(volatile const uint32_t *)(mem + dev + 0x30);
+    if (!guest_ptr_ok(gp))
+        return;
+    cpu = *(volatile const uint32_t *)(mem + dev + 0x2C);
+    gpu = cpu - 2;
+    if (*(volatile uint32_t *)(uintptr_t)(mem + gp) != gpu)
+        *(volatile uint32_t *)(uintptr_t)(mem + gp) = gpu;
+    *(volatile uint32_t *)(uintptr_t)(mem + 0xFD400B10u) = (gpu << 2) & 0x7C;
+    if (!announced++)
+        fprintf(stderr, "[GPU] idle shim: device 0x%08X, fence at 0x%08X "
+                        "(workaround: every fence reported complete)\n", dev, gp);
+}
+
 static DWORD WINAPI gpu_idle_main(LPVOID unused)
 {
-    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
-    unsigned announced = 0;
     (void)unused;
-
     for (;;) {
-        uint32_t dev, gp, cpu, gpu;
         Sleep(1);
-        dev = *(volatile const uint32_t *)(mem + 0x002F1FB8u);
-        if (!guest_ptr_ok(dev))
-            continue;
-        gp = *(volatile const uint32_t *)(mem + dev + 0x30);
-        if (!guest_ptr_ok(gp))
-            continue;
-        cpu = *(volatile const uint32_t *)(mem + dev + 0x2C);
-        gpu = cpu - 2;
-        if (*(volatile uint32_t *)(uintptr_t)(mem + gp) != gpu)
-            *(volatile uint32_t *)(uintptr_t)(mem + gp) = gpu;
-        *(volatile uint32_t *)(uintptr_t)(mem + 0xFD400B10u) = (gpu << 2) & 0x7C;
-        if (!announced++)
-            fprintf(stderr, "[GPU] idle shim: device 0x%08X, fence at 0x%08X "
-                            "(workaround: every fence reported complete)\n", dev, gp);
+        gpu_idle_pass();
     }
 }
 
@@ -563,6 +586,13 @@ static void gpu_idle_start(void)
      * buffers the GPU had not read yet. RECOMP_GPU_IDLE_SHIM=1 forces it. */
     if (getenv("RECOMP_PB_EXEC") && !(e && *e == '1')) {
         xbox_Nv2aSemaphoreAt(0x002F1FB8u, 0x30);
+        return;
+    }
+    /* Under a guest-CPU schedule: at every timer turn, and at the yield
+     * point of D3D's wait for it (sub_002E7E80). */
+    if (xbox_SchedMode()) {
+        xbox_SchedAddTick(gpu_idle_pass);
+        xbox_SchedAddPump(gpu_idle_pass);
         return;
     }
     CloseHandle(CreateThread(NULL, 0, gpu_idle_main, NULL, 0, NULL));

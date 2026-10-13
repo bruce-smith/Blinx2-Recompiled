@@ -1,0 +1,7 @@
+{
+  "0x00060475": "main loop: wait for the frame's vblanks ([0xAE7388])",
+  "0x002E7EA0": "D3D sub_002E7E80: wait for NV2A 0x400B10 to match the fence (GPU-idle shim)",
+  "0x002E7F70": "D3D sub_002E7F30: wait for NV2A 0x100410 busy bit 16 to drop (ack pass)",
+  "0x002EA590": "D3D vblank DPC: ack PCRTC, wait for PMC_INTR bit 24 to drop (vblank ack)",
+  "0x00334325": "DirectSound sub_003341BE: wait for the DSP doorbell to clear (doorbell ack)"
+}
