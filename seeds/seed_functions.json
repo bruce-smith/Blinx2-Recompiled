@@ -213,5 +213,20 @@
     "start": "0x000EF540",
     "observed": true,
     "note": "Indirect-call target observed at runtime in stage 01-01 ([ICALL] Failed to resolve VA 0x000EF540, 96x across the human's logs); decodes as a function body after sub_000EF4E0's ret. Load-completion callback: decrements the pending count [0xB8BBB0] and sets [0x41158C] when it reaches 0 -- skipped, the mission summary never appears."
+  },
+  {
+    "start": "0x001AE1E0",
+    "observed": true,
+    "note": "Indirect-call target observed after stage 01-01's results screen (song_RESULTsw): 121 '[ICALL] Failed to resolve' in the human's 2026-10-12 21:15 log. Decodes as a function after a ret: reads [0xDE044C] and picks 0xCD2440 or 0xCD3070."
+  },
+  {
+    "start": "0x001B04E0",
+    "observed": true,
+    "note": "Indirect-call target observed after stage 01-01's results screen: 169 failed ICALLs in the same log. Decodes as a function after a ret, same [0xDE044C] table choice as 0x001AE1E0."
+  },
+  {
+    "start": "0x0016A870",
+    "observed": true,
+    "note": "Indirect-call target observed after jingle_12kenriseiritsu (2 failed ICALLs in each of three of the human's 2026-10-12 runs). Function start after int3 padding: mov eax,[esp+4]; sub esp,8; ..."
   }
 ]
