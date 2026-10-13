@@ -105,17 +105,23 @@ extern ptrdiff_t g_xbox_mem_offset;
  * before a frame was taken (peak, against its target [0x3FD344]; at the
  * 2-vblank target, 2 means the frame was on time), how much of the second the NV2A
  * executor waited for its raster workers, how much of the workers' time
- * went idle or blocked (barriers, geometry), and the last asset archive,
- * movie or music file opened -- which scene it was. RECOMP_PERF_LOG=0 turns
- * it off. */
+ * went idle or blocked (barriers, geometry), draw calls and thousands of
+ * pixels per frame (many draws: setup-bound; many pixels: raster-bound),
+ * and the last asset archive, movie or music file opened -- which scene it
+ * was. RECOMP_PERF_LOG=0 turns it off. */
 static void perf_line(long ms, uint32_t vbl, uint32_t frames, uint32_t peak,
                       uint32_t target)
 {
     extern void nv2a_pb_exec_perf(double *, double *, double *);
+    extern void nv2a_pb_exec_counts(uint32_t *, uint64_t *);
     extern const char *xbox_LastAsset(void);
     static int on = -1;
     static long total;
+    static uint32_t draws0;
+    static uint64_t px0;
     double idle, blocked, wait;
+    uint32_t draws, f = frames ? frames : 1;
+    uint64_t px;
 
     if (on < 0) {
         const char *e = getenv("RECOMP_PERF_LOG");
@@ -125,10 +131,15 @@ static void perf_line(long ms, uint32_t vbl, uint32_t frames, uint32_t peak,
         return;
     total += ms;
     nv2a_pb_exec_perf(&idle, &blocked, &wait);
+    nv2a_pb_exec_counts(&draws, &px);
     fprintf(stderr, "[PERF] %lds %u fps %u irq peak %u/%u | executor waited"
-            " %.0f%% | workers idle %.0f%% blocked %.0f%% | %s\n",
+            " %.0f%% | workers idle %.0f%% blocked %.0f%% | %u draws %uk px"
+            " a frame | %s\n",
             total / 1000, frames, vbl, peak, target, wait * 100, idle * 100,
-            blocked * 100, xbox_LastAsset());
+            blocked * 100, (draws - draws0) / f,
+            (unsigned)((px - px0) / f / 1000), xbox_LastAsset());
+    draws0 = draws;
+    px0 = px;
 }
 
 static void timing_trace(uint32_t counter)
