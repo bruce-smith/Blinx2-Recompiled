@@ -8,40 +8,19 @@ rem Each run gets a folder build\Release\recordings\<date-time>\ holding
 rem   save\            the saves, title data and Z: cache the run started from
 rem   schedule.sched   the guest schedule (about 10-15 KB a second of play)
 rem   input.rec        the pad input
-rem Close the window to end the run; the recording is complete at that point.
+rem   game.log         the game's log
+rem Close the game window to end the run; the recording is complete then.
+rem
+rem It refuses to start with an exe too old to record exactly, or while the
+rem game is already running from build\Release, and says so if no window has
+rem appeared after two minutes. The work is in record_blinx2.ps1.
 setlocal
-set "EXE_DIR=%~dp0build\Release"
 rem Where the exe keeps saves when RECOMP_SAVE_DIR is not set (src\main.c):
 rem UDATA/TDATA in the game folder, the Z: cache under %LOCALAPPDATA%.
-set "GAME_DIR=E:\Blinx2project\game_files"
-set "CACHE_DIR=%LOCALAPPDATA%\xboxrecomp"
-
-if not exist "%EXE_DIR%\blinx_2_recomp.exe" (
-    echo blinx_2_recomp.exe not found in %EXE_DIR%
-    exit /b 1
-)
-for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "STAMP=%%t"
-set "REC=%EXE_DIR%\recordings\%STAMP%"
-mkdir "%REC%\save" 2>nul
-
-echo Saving the starting state to %REC%\save ...
-rem The partition images are large and never change; the replay recreates them.
-if defined RECOMP_SAVE_DIR (
-    rem An explicit save dir holds everything, UDATA/TDATA included.
-    robocopy "%RECOMP_SAVE_DIR%" "%REC%\save" /E /XF Partition*.img /NFL /NDL /NJH /NJS /NP >nul
-) else (
-    robocopy "%CACHE_DIR%" "%REC%\save" /E /XF Partition*.img /NFL /NDL /NJH /NJS /NP >nul
-    robocopy "%GAME_DIR%\UDATA" "%REC%\save\UDATA" /E /NFL /NDL /NJH /NJS /NP >nul
-    robocopy "%GAME_DIR%\TDATA" "%REC%\save\TDATA" /E /NFL /NDL /NJH /NJS /NP >nul
-)
-
-set "RECOMP_SCHED_RECORD=%REC%\schedule.sched"
-set "RECOMP_INPUT_RECORD=%REC%\input.rec"
-
-cd /d "%EXE_DIR%"
-echo Recording this run to %REC%
-"%EXE_DIR%\blinx_2_recomp.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0record_blinx2.ps1" ^
+    -ExeDir "%~dp0build\Release" ^
+    -GameDir "E:\Blinx2project\game_files" ^
+    -CacheDir "%LOCALAPPDATA%\xboxrecomp"
 echo.
-echo Recording saved in %REC%
-echo Replay it with:  replay_blinx2.bat "%REC%"
+pause
 endlocal
