@@ -291,7 +291,8 @@ extern void sub_00368457_gen(void);
  *
  * Recording: on by default in normal (non-headless) runs, to
  * blinx2_input.rec next to the exe (rotated like the logs by main.c);
- * RECOMP_INPUT_RECORD=1 forces it, =0 turns it off. Only changes are
+ * RECOMP_INPUT_RECORD=1 forces it, =0 turns it off, =<path> records there
+ * (record_blinx2.bat). Only changes are
  * written, per pad handle, so a long session of a few thousand presses is a
  * few hundred KB. Each record is flushed: closing the window ends the
  * process without running exit handlers.
@@ -514,13 +515,18 @@ static void input_rec_open(void)
          * completions, device arrivals). Turns a version 1 recording into a
          * version 2 one with the same input. */
         rc = getenv("RECOMP_INPUT_RERECORD");
+        if (!rc || !*rc) {          /* or RECOMP_INPUT_RECORD=<path> */
+            rc = getenv("RECOMP_INPUT_RECORD");
+            if (rc && (!rc[0] || !rc[1]))
+                rc = NULL;
+        }
         if (!rc || !*rc || !(s_in_file = fopen(rc, "wb")))
             return;
         goto header;
     }
     if (rc ? (*rc == '0') : (getenv("RECOMP_HEADLESS") != NULL))
         return;
-    s_in_file = fopen("blinx2_input.rec", "wb");
+    s_in_file = fopen(rc && rc[0] && rc[1] ? rc : "blinx2_input.rec", "wb");
     if (!s_in_file)
         return;
 header:
