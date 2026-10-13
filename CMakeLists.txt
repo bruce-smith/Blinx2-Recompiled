@@ -84,9 +84,15 @@ if(GIT_FOUND)
                     OUTPUT_VARIABLE XBOXRECOMP_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
                     ERROR_QUIET)
 endif()
+# Where the game's files (default.xbe and the .ipk/.iph archives) are looked
+# for when neither RECOMP_GAME_DIR nor a game_files folder next to the exe
+# says otherwise (src/main.c, resolve_game_dir).
+set(BLINX2_GAME_DIR "E:/Blinx2project/game_files" CACHE PATH
+    "Default directory of the extracted game files (default.xbe)")
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     BLINX2_GIT_SHA="${BLINX2_GIT_SHA}"
-    XBOXRECOMP_GIT_SHA="${XBOXRECOMP_GIT_SHA}")
+    XBOXRECOMP_GIT_SHA="${XBOXRECOMP_GIT_SHA}"
+    BLINX2_GAME_DIR_DEFAULT="${BLINX2_GAME_DIR}")
 
 # Link against the xboxrecomp umbrella target (all 6 runtime libraries)
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp)

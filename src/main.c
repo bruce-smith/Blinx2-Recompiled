@@ -15,8 +15,9 @@
  *
  * Customize this file for your game:
  *   - Set BLINX_2_ENTRY_POINT to the XBE entry point address
- *   - Set BLINX_2_XBE_PATH to where the XBE file lives
- *   - Set BLINX_2_DIR to the game data directory
+ *   - The game files (default.xbe and its archives) are found by
+ *     resolve_game_dir(): RECOMP_GAME_DIR, else game_files\ next to the exe,
+ *     else the CMake option BLINX2_GAME_DIR
  *   - Add any CRT global pre-initialization your game needs
  *   - Customize the VEH handler for game-specific crash diagnosis
  *
@@ -92,8 +93,45 @@ extern ptrdiff_t g_xbox_mem_offset;
  * Run: py -3 -m tools.xbe_parser game/default.xbe
  */
 #define BLINX_2_ENTRY_POINT   0x0029A1DA  /* XBE entry point VA */
-#define BLINX_2_XBE_PATH      "E:\\Blinx2project\\game_files\\default.xbe"
-#define BLINX_2_DIR            "E:\\Blinx2project\\game_files"
+#ifndef BLINX2_GAME_DIR_DEFAULT
+#define BLINX2_GAME_DIR_DEFAULT "E:\\Blinx2project\\game_files"
+#endif
+
+/* The directory of the extracted game files: default.xbe and the .ipk/.iph
+ * archives, as unpacked from the disc image. In order:
+ *   1. RECOMP_GAME_DIR, if set;
+ *   2. game_files\ next to the exe, if it holds default.xbe;
+ *   3. BLINX2_GAME_DIR, set when configuring with CMake
+ *      (-DBLINX2_GAME_DIR=...; default E:/Blinx2project/game_files).
+ * Saves (UDATA/TDATA) live in this directory unless RECOMP_SAVE_DIR moves
+ * them. Called once the working directory is the exe's own folder. */
+static char g_game_dir[MAX_PATH];
+static char g_xbe_path[MAX_PATH];
+
+static void resolve_game_dir(void)
+{
+    const char *env = getenv("RECOMP_GAME_DIR");
+    char *p;
+    size_t n;
+
+    if (env && *env) {
+        snprintf(g_game_dir, sizeof g_game_dir, "%s", env);
+    } else if (GetFileAttributesA("game_files\\default.xbe") != INVALID_FILE_ATTRIBUTES
+               && GetFullPathNameA("game_files", sizeof g_game_dir, g_game_dir, NULL)) {
+        /* game_files next to the exe */
+    } else {
+        snprintf(g_game_dir, sizeof g_game_dir, "%s", BLINX2_GAME_DIR_DEFAULT);
+    }
+    for (p = g_game_dir; *p; p++)
+        if (*p == '/')
+            *p = '\\';
+    n = strlen(g_game_dir);
+    while (n > 3 && g_game_dir[n - 1] == '\\')
+        g_game_dir[--n] = 0;
+    snprintf(g_xbe_path, sizeof g_xbe_path, "%s\\default.xbe", g_game_dir);
+}
+#define BLINX_2_XBE_PATH      g_xbe_path
+#define BLINX_2_DIR           g_game_dir
 
 /* ── Forward declarations ──────────────────────────────────── */
 
@@ -1194,10 +1232,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     signal(SIGABRT, exit_report_sigabrt);
 
     /* Step 1: Load XBE */
+    resolve_game_dir();
+    fprintf(stderr, "[BOOT] game files: %s\n", BLINX_2_DIR);
     if (!load_xbe(BLINX_2_XBE_PATH, &xbe_data, &xbe_size)) {
-        MessageBoxA(NULL, "Failed to load default.xbe.\n"
-                    "Place the game files in the 'game' subdirectory.",
-                    "Recomp", MB_ICONERROR);
+        char msg[MAX_PATH + 256];
+        snprintf(msg, sizeof msg,
+                 "Failed to load %s.\n\n"
+                 "Extract your own disc's files (default.xbe and the .ipk/.iph "
+                 "archives) to a game_files folder next to this exe, or set "
+                 "RECOMP_GAME_DIR to the folder that holds them.",
+                 BLINX_2_XBE_PATH);
+        MessageBoxA(NULL, msg, "Blinx 2 (recomp)", MB_ICONERROR);
         return 1;
     }
     printf("XBE loaded: %zu bytes\n", xbe_size);

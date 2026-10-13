@@ -17,9 +17,15 @@ rem appeared after two minutes. The work is in record_blinx2.ps1.
 setlocal
 rem Where the exe keeps saves when RECOMP_SAVE_DIR is not set (src\main.c):
 rem UDATA/TDATA in the game folder, the Z: cache under %LOCALAPPDATA%.
+rem The game folder is found as the exe finds it: RECOMP_GAME_DIR, else
+rem game_files next to the exe, else the build's default (BLINX2_GAME_DIR in
+rem CMakeLists.txt; change GAME_DIR below if you configured another one).
+set "GAME_DIR=E:\Blinx2project\game_files"
+if exist "%~dp0build\Release\game_files\default.xbe" set "GAME_DIR=%~dp0build\Release\game_files"
+if defined RECOMP_GAME_DIR set "GAME_DIR=%RECOMP_GAME_DIR%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0record_blinx2.ps1" ^
     -ExeDir "%~dp0build\Release" ^
-    -GameDir "E:\Blinx2project\game_files" ^
+    -GameDir "%GAME_DIR%" ^
     -CacheDir "%LOCALAPPDATA%\xboxrecomp"
 echo.
 pause
