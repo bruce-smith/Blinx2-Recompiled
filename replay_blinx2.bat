@@ -30,8 +30,8 @@ set "RECOMP_INPUT_RECORD=0"
 
 cd /d "%EXE_DIR%"
 if /i "%~2"=="window" (
-    echo Replaying %REC% in a window
-    "%EXE_DIR%\blinx_2_recomp.exe"
+    echo Replaying %REC% in a window; log: %REC%\replay.log
+    "%EXE_DIR%\blinx_2_recomp.exe" 2> "%REC%\replay.log"
     goto done
 )
 rem Headless, with the same devices the recording ran with: the pushbuffer
@@ -44,5 +44,12 @@ set "RECOMP_AUDIO_MUTE=1"
 echo Replaying %REC% headless; log: %REC%\replay.log
 "%EXE_DIR%\blinx_2_recomp.exe" 2> "%REC%\replay.log"
 :done
+rem Exit code 4: the run left the recording's path and the replay stopped
+rem itself (the "[REPLAY] diverged" line in the log says where).
+if errorlevel 4 if not errorlevel 5 (
+    echo Replay STOPPED: it diverged from the recording. See %REC%\replay.log
+    endlocal
+    exit /b 4
+)
 echo Replay finished.
 endlocal

@@ -774,6 +774,10 @@ static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
     if (s_in_mode == 0)
         return;
     poll = s_in_poll++;
+    {   /* where a failed schedule replay says it stopped (sched.c) */
+        extern volatile uint32_t xbox_sched_poll;
+        xbox_sched_poll = poll;
+    }
     vb_poll(poll);
     if (!state)
         return;
