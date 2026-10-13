@@ -831,6 +831,10 @@ static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
     }
 
 record:
+    /* A replay handing over to live input records only if asked to: without
+     * a file, fwrite(NULL) here froze the process at the handover. */
+    if (!s_in_file)
+        return;
     /* Record: one entry whenever a handle's state or result changes. */
     for (slot = 0; slot < 8; slot++)
         if (s_rec_last[slot].handle == handle || !s_rec_last[slot].handle)
