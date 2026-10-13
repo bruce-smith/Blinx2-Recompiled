@@ -1,0 +1,247 @@
+# Blinx 2: Masters of Time and Space — static recompilation
+
+A static recompilation of **Blinx 2: Masters of Time and Space** (original
+Xbox, NTSC-U) into a native Windows executable. The game's x86 code is
+translated function by function into C and compiled with MSVC. The Xbox
+hardware and kernel it talks to are reimplemented by the runtime of
+[xboxrecomp](https://github.com/bruce-smith/xboxrecomp) (branch
+`blinx2-fixes`), our fork of
+[sp00nznet/xboxrecomp](https://github.com/sp00nznet/xboxrecomp).
+
+- This repository: the game project that produces `blinx_2_recomp.exe`: its
+  entry point, game-specific overrides (`src/recomp_manual.c`), the seed
+  files the pipeline needs (`seeds/`) and the build.
+- [xboxrecomp fork](https://github.com/bruce-smith/xboxrecomp) (branch
+  `blinx2-fixes`): the recompiler pipeline (Python) and the runtime libraries
+  (kernel, NV2A, APU, USB, ...).
+- [blinx-2-recompile-full](https://github.com/bruce-smith/blinx-2-recompile-full):
+  a superproject that pins matching commits of both as submodules.
+
+## Status
+
+Playable through the early game: the intro movies, the title screen, the
+Time Sweeper hub, stage 01-01 and the first Tom-Tom Gang stages (including
+the Subspace Dive gadget).
+
+- **Graphics:** a software NV2A renderer that executes the game's
+  pushbuffer, with parallel, SIMD rasterisation, register combiners, stencil,
+  bump-environment mapping and render-to-texture. About 30 fps in the hub
+  and stage 01-01 on a fast multi-core desktop CPU. A Vulkan GPU backend is
+  in progress.
+- **Audio:** the APU's voice processor is emulated and played through
+  XAudio2. Music, effects and movie sound work. The DSP effects (reverb)
+  are not emulated; Blinx 2 does not appear to use them.
+- **Input:** keyboard and XInput pads.
+- **Saves** work.
+- **Known issues:** frame rate drops in busy scenes (the rain stage runs
+  around 20 fps); later parts of the game are largely untested. Rendering is
+  done on the CPU, so a slow or low-core-count CPU gives a low frame rate.
+
+## Legal
+
+No game files are included or distributed here, and none will be. The
+recompiled code is generated from your own copy of the game and is not part
+of this repository either. You need a legally obtained copy of the original
+Xbox disc of Blinx 2.
+
+## Prerequisites
+
+- Windows 10/11, x64.
+- Visual Studio 2022 with the "Desktop development with C++" workload (MSVC).
+- CMake 3.20 or newer (the one bundled with Visual Studio works).
+- Python 3.10+ (3.12 is what we use) with `capstone`:
+  `py -3 -m pip install capstone` (and `pytest` if you want to run the
+  toolkit's tests).
+- Git.
+- [xdvdfs](https://github.com/antangelo/xdvdfs) to extract the disc image.
+- Disk space: about 2 GB for the game files, 1.5 GB for the generated C and
+  a few GB for the build.
+
+## Getting the source
+
+Either clone the superproject, which pins matching commits of both repos:
+
+```
+git clone --recurse-submodules https://github.com/bruce-smith/blinx-2-recompile-full.git
+```
+
+or clone the two repositories side by side (the build expects
+`../xboxrecomp` next to this one):
+
+```
+git clone https://github.com/bruce-smith/Blinx2-Recompiled.git blinx2-recomp
+git clone -b blinx2-fixes https://github.com/bruce-smith/xboxrecomp.git xboxrecomp
+```
+
+The rest of this README assumes this layout:
+
+```
+<root>\
+  blinx2-recomp\     this repository
+  xboxrecomp\        the xboxrecomp fork, branch blinx2-fixes
+  game_files\        the extracted disc (next section)
+```
+
+## Extracting the game files
+
+1. Make a disc image (ISO/XISO) of your own Blinx 2 disc with your usual
+   tool.
+2. Extract it with xdvdfs into `<root>\game_files`:
+
+   ```
+   xdvdfs unpack "Blinx 2.iso" <root>\game_files
+   ```
+
+`game_files` must then contain `default.xbe` (about 38 MB) and the game's
+`.ipk`/`.iph` archives (`media.ipk`, `lng_us.ipk`, ...) together with its
+subfolders (`movie`, `adx`, ...), exactly as they are on the disc. Do not
+rename or repack anything.
+
+The exe looks for the game files in this order:
+
+1. the folder in the environment variable `RECOMP_GAME_DIR`;
+2. a `game_files` folder next to `blinx_2_recomp.exe`, if it holds
+   `default.xbe`;
+3. the folder set at configure time with `-DBLINX2_GAME_DIR=<path>`.
+
+It logs the folder it uses (`[BOOT] game files: ...`). Your saves
+(`UDATA`/`TDATA`) are written into that folder.
+
+## Generating the recompiled C
+
+The generated C (`src/recomp/gen/`, about 3 million lines) is not in the
+repository; you generate it from your own `default.xbe`. Run every step from
+the `xboxrecomp` folder: the tools read and write their intermediate output
+relative to the current directory.
+
+```
+cd <root>\xboxrecomp
+py -3 -m tools.xbe_parser   ..\game_files\default.xbe --json ..\game_files\mygame_analysis.json
+py -3 -m tools.disasm       ..\game_files\default.xbe --text-only --extra-sections DSOUND,D3D,D3DX,XGRPH,XPP,SRCADV,SRCED,SRCAC,PSFD_I,PSFD_B,PSFD_P,PSFD00 --seed-functions ..\blinx2-recomp\seeds\seed_functions.json
+py -3 -m tools.func_id      ..\game_files\default.xbe -v
+py -3 -m tools.abi_analysis ..\game_files\default.xbe -v
+py -3 -m tools.recomp       ..\game_files\default.xbe --all --split 250 --gen-dir ..\blinx2-recomp\src\recomp\gen --exclude-manual ..\blinx2-recomp\src\recomp_manual.c --coalesce-functions ..\blinx2-recomp\seeds\coalesce.json --yield-points ..\blinx2-recomp\seeds\yield_points.json --loop-heads
+```
+
+Expect about 20 minutes in total: seconds for the parser, about a minute
+each for `disasm`, `func_id` and `abi_analysis`, and about 15 minutes for
+`recomp`.
+
+Each option matters:
+
+- `--extra-sections`: Blinx 2 has x86 code outside `.text` (the XDK
+  libraries and the Sofdec movie decoder). Code that is not swept turns into
+  stubs and corrupts the guest stack.
+- `--seed-functions`: entry points that are only reached indirectly and
+  that static analysis cannot find.
+- `--exclude-manual`: functions that `src/recomp_manual.c` overrides are
+  emitted as `<name>_gen`; without it the link fails.
+- `--coalesce-functions`: merges false function splits that would
+  otherwise recurse on the host stack.
+- `--yield-points` / `--loop-heads`: needed by the exact replay
+  (`replay_blinx2.bat`); they cost almost nothing in normal play.
+
+Keep the analysis file named `mygame_analysis.json` next to `default.xbe`,
+and keep only one `.xbe` in `game_files`. The tools find the analysis by that
+pattern.
+
+## Building
+
+```
+cd <root>\blinx2-recomp
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+```
+
+Add `-DBLINX2_GAME_DIR=<root>/game_files` to the first command to bake in
+your game folder (otherwise use `RECOMP_GAME_DIR` or a `game_files` folder
+next to the exe). The first build compiles the generated C and takes 15-20
+minutes; later builds are incremental. The result is
+`build\Release\blinx_2_recomp.exe`.
+
+Regenerating the C rewrites every generated file, so the build after a
+regeneration is a full rebuild again.
+
+## Running
+
+Double-click `build\Release\blinx_2_recomp.exe`. It opens a window, with sound
+and keyboard/pad input on.
+
+### Controls
+
+| Xbox pad | Keyboard |
+|---|---|
+| D-pad | Arrow keys |
+| Left stick | Numpad 8 / 4 / 2 / 6 |
+| Right stick | I / J / K / L |
+| A / B / X / Y | Z / X / A / S |
+| Black / White | E / Q |
+| Left / right trigger | 1 / 3 |
+| Left / right stick click | Shift / Ctrl |
+| Start / Back | Enter / Backspace |
+
+An XInput pad (e.g. an Xbox controller) works as well. LB/RB map to
+White/Black, and the triggers are analog.
+
+Window: it opens at 2x size and is resizable with the aspect ratio kept.
+F11 or Alt+Enter toggles full screen; F9 switches between nearest and linear
+filtering.
+
+### Files
+
+- Saves: `UDATA` and `TDATA` in the game files folder (or in
+  `RECOMP_SAVE_DIR`, if set).
+- Cache (the game copies archives to its Z: drive):
+  `%LOCALAPPDATA%\xboxrecomp`.
+- Logs, next to the exe: `blinx2_recomp.log` (the game's log) and
+  `xbox_kernel.log`. The previous five runs' logs are kept as
+  `*.prev-<time>.log`. Attach them to bug reports.
+
+### Recording and exact replay
+
+- `record_blinx2.bat` plays as usual and records the run into
+  `build\Release\recordings\<date-time>\`: a copy of the starting saves, the
+  pad input, the guest thread schedule and what the game read from the host
+  clock.
+- `replay_blinx2.bat <recording folder> [window]` replays it exactly,
+  headless by default, from a private copy of the recorded saves. It is
+  useful to reproduce a bug.
+
+### Useful switches
+
+Environment variables, set before starting the exe:
+
+| Variable | Effect |
+|---|---|
+| `RECOMP_GAME_DIR=<dir>` | Folder with `default.xbe` and the archives. |
+| `RECOMP_SAVE_DIR=<dir>` | Keep saves and cache in `<dir>` instead. |
+| `RECOMP_AUDIO=0` | No sound. |
+| `RECOMP_FB_SCALE=<n>`, `RECOMP_FB_FILTER=linear` | Initial window scale and filter. |
+| `RECOMP_RASTER_THREADS=<n>` | Raster worker threads (default: CPU count minus 4). |
+| `RECOMP_ASYNC_SYNC=0` | Fully drain the renderer at sync points (slower; for troubleshooting). |
+| `RECOMP_HEADLESS=1` | No window, no dialogs (for scripted runs). |
+| `RECOMP_WATCHDOG_STALL=<s>` | Dump diagnostics and exit if no frame is presented for `<s>` seconds. |
+
+## Troubleshooting
+
+- **"Failed to load ...\default.xbe"**: the game files are not where the
+  exe looks (see [Extracting the game files](#extracting-the-game-files)).
+  The message names the path it tried.
+- **"Cannot open include file: recomp_types.h"** or missing `recomp_*.c`:
+  the `recomp` step did not finish. Run it again.
+- **Link errors about `*_gen` functions or duplicate `sub_XXXXXXXX`**: the
+  generated C is older than `src/recomp_manual.c`. Rerun the pipeline with
+  `--exclude-manual` as shown.
+- **Unresolved externals like `recomp_0042.c`**: the set of generated files
+  changed. Rerun the CMake configure step.
+- **Low frame rate**: rendering runs on the CPU. Close other heavy programs;
+  more cores help.
+- **A crash**: the game shows a message box and writes the details (guest
+  registers, call stack) to `blinx2_recomp.log`.
+
+## License and credits
+
+- [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) by sp00nznet (MIT).
+  Our changes are in the [fork](https://github.com/bruce-smith/xboxrecomp).
+- Blinx 2: Masters of Time and Space is © Artoon / Microsoft Game Studios.
+  This project is not affiliated with or endorsed by them.
