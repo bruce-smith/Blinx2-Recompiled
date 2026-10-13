@@ -228,5 +228,10 @@
     "start": "0x0016A870",
     "observed": true,
     "note": "Indirect-call target observed after jingle_12kenriseiritsu (2 failed ICALLs in each of three of the human's 2026-10-12 runs). Function start after int3 padding: mov eax,[esp+4]; sub esp,8; ..."
+  },
+  {
+    "start": "0x000AEC20",
+    "observed": true,
+    "note": "Indirect-call target observed on the first Tom-Tom Gang mission path (the human's 2026-10-12 23:37 log: 150,528 '[ICALL] Failed to resolve VA 0x000AEC20', the only unresolved target). Function start right after a jump table: mov edx,[esp+4]; movzx eax,byte [edx+1]; ..."
   }
 ]
