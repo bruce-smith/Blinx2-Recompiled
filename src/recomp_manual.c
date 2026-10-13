@@ -99,6 +99,38 @@ extern ptrdiff_t g_xbox_mem_offset;
  * the counter at the top of each frame, so a drop in it is a new frame.
  * [0x3FD344] is the vblanks-per-frame target and [0x4AC760] the step
  * the game logic advances by. */
+/* Every run also prints one compact [PERF] line a second, so any playtest
+ * log is a performance map: frames that second, D3D's NV2A interrupt calls
+ * (irq: vblanks plus notifies), the deepest the title's vblank count got
+ * before a frame was taken (peak, against its target [0x3FD344]; at the
+ * 2-vblank target, 2 means the frame was on time), how much of the second the NV2A
+ * executor waited for its raster workers, how much of the workers' time
+ * went idle or blocked (barriers, geometry), and the last asset archive,
+ * movie or music file opened -- which scene it was. RECOMP_PERF_LOG=0 turns
+ * it off. */
+static void perf_line(long ms, uint32_t vbl, uint32_t frames, uint32_t peak,
+                      uint32_t target)
+{
+    extern void nv2a_pb_exec_perf(double *, double *, double *);
+    extern const char *xbox_LastAsset(void);
+    static int on = -1;
+    static long total;
+    double idle, blocked, wait;
+
+    if (on < 0) {
+        const char *e = getenv("RECOMP_PERF_LOG");
+        on = !(e && *e == '0');
+    }
+    if (!on)
+        return;
+    total += ms;
+    nv2a_pb_exec_perf(&idle, &blocked, &wait);
+    fprintf(stderr, "[PERF] %lds %u fps %u irq peak %u/%u | executor waited"
+            " %.0f%% | workers idle %.0f%% blocked %.0f%% | %s\n",
+            total / 1000, frames, vbl, peak, target, wait * 100, idle * 100,
+            blocked * 100, xbox_LastAsset());
+}
+
 static void timing_trace(uint32_t counter)
 {
     static int on = -1;
@@ -109,8 +141,6 @@ static void timing_trace(uint32_t counter)
 
     if (on < 0)
         on = getenv("RECOMP_TIMING_TRACE") != NULL;
-    if (!on)
-        return;
     vbl++;
     if (counter < last)
         frames++;
@@ -125,7 +155,10 @@ static void timing_trace(uint32_t counter)
          * D3D BlockUntilVerticalBlank; Sofdec times video-only movies by it. */
         static uint32_t adxm_last;
         uint32_t adxm = *(const uint32_t *)(mem + 0x4B762C);
-        fprintf(stderr, "  [TIMING] %ld ms: %u vblanks, %u frames (peak count %u); "
+        perf_line(now - t0, vbl, frames, peak,
+                  *(const uint32_t *)(mem + 0x3FD344));
+        if (on)
+            fprintf(stderr, "  [TIMING] %ld ms: %u vblanks, %u frames (peak count %u); "
                 "interval [3FD344]=%u step [4AC760]=%u phase [EC4BF8]=%u "
                 "cpu [AE71A4]=%u adxm vsyncs +%u usb bw %u/%u %u/%u\n",
                 now - t0, vbl, frames, peak,
