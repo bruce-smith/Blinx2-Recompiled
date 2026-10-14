@@ -233,5 +233,95 @@
     "start": "0x000AEC20",
     "observed": true,
     "note": "Indirect-call target observed on the first Tom-Tom Gang mission path (the human's 2026-10-12 23:37 log: 150,528 '[ICALL] Failed to resolve VA 0x000AEC20', the only unresolved target). Function start right after a jump table: mov edx,[esp+4]; movzx eax,byte [edx+1]; ..."
+  },
+  {
+    "start": "0x000A6E10",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (mov imm32 at 0x000A5AD4), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x000C6390",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (mov imm32 at 0x000C5CB2), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x000C9430",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (mov imm32 at 0x000C863B; after a jump table), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x000CCC00",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (mov imm32 at 0x000CC819), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x000CEBD0",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (mov imm32 at 0x000CE70D), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x000D09F0",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (.data table 0x00403B1C; after a jump table), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x000D86E0",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (mov imm32 at 0x000D84DD), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x00341370",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (DATADV table 0x0112E180), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x00341D90",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (DATADV table 0x0112E18C), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x0034DBD0",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (DATADV table 0x0112E524; after a jump table), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x00359C40",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): function address taken (DATADV table 0x0112F668), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
+  },
+  {
+    "start": "0x000453A0",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
+  },
+  {
+    "start": "0x000DB806",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
+  },
+  {
+    "start": "0x001DFD71",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
+  },
+  {
+    "start": "0x001E0040",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
+  },
+  {
+    "start": "0x002D54FD",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
+  },
+  {
+    "start": "0x002E50B0",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
+  },
+  {
+    "start": "0x0034309A",
+    "observed": false,
+    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
   }
 ]
