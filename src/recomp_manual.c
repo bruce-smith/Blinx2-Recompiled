@@ -313,6 +313,7 @@ extern void sub_00368457_gen(void);
  * per poll, 4 worker-thread completions, 5 device arrivals (each explained
  * where it is handled, below). Version 1 files (no events) still replay, but
  * drift after the first load or movie. */
+#include "build_sha.h"                 /* written on every build (cmake/git_sha.cmake) */
 #ifndef BLINX2_GIT_SHA
 #define BLINX2_GIT_SHA "unknown"
 #endif

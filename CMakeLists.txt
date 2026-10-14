@@ -69,29 +69,26 @@ add_executable(${PROJECT_NAME} WIN32
 )
 
 # Both repos' commits, for the input recording's header (and anything else
-# that should say which build produced it). Read at configure time, so a
-# rebuild without a reconfigure keeps the old values.
+# that should say which build produced it), in build_sha.h. Regenerated on
+# every build, not at configure time: a relink after a pull without a
+# reconfigure used to stamp recordings with the commit of the last configure.
 find_package(Git QUIET)
-set(BLINX2_GIT_SHA "unknown")
-set(XBOXRECOMP_GIT_SHA "unknown")
-if(GIT_FOUND)
-    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
-                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                    OUTPUT_VARIABLE BLINX2_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
-                    ERROR_QUIET)
-    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
-                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../xboxrecomp
-                    OUTPUT_VARIABLE XBOXRECOMP_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
-                    ERROR_QUIET)
-endif()
+set(BLINX2_SHA_DIR ${CMAKE_CURRENT_BINARY_DIR}/build_sha)
+add_custom_target(blinx2_git_sha ALL
+    COMMAND ${CMAKE_COMMAND} -DOUT=${BLINX2_SHA_DIR}/build_sha.h
+            -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -DGIT=${GIT_EXECUTABLE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/git_sha.cmake
+    BYPRODUCTS ${BLINX2_SHA_DIR}/build_sha.h
+    COMMENT "Stamping the build with both repos' commits"
+    VERBATIM)
+add_dependencies(${PROJECT_NAME} blinx2_git_sha)
+target_include_directories(${PROJECT_NAME} PRIVATE ${BLINX2_SHA_DIR})
 # Where the game's files (default.xbe and the .ipk/.iph archives) are looked
 # for when neither RECOMP_GAME_DIR nor a game_files folder next to the exe
 # says otherwise (src/main.c, resolve_game_dir).
 set(BLINX2_GAME_DIR "E:/Blinx2project/game_files" CACHE PATH
     "Default directory of the extracted game files (default.xbe)")
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    BLINX2_GIT_SHA="${BLINX2_GIT_SHA}"
-    XBOXRECOMP_GIT_SHA="${XBOXRECOMP_GIT_SHA}"
     BLINX2_GAME_DIR_DEFAULT="${BLINX2_GAME_DIR}")
 
 # Link against the xboxrecomp umbrella target (all 6 runtime libraries)
