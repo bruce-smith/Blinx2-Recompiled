@@ -21,6 +21,15 @@ add_compile_definitions(
     NOMINMAX
 )
 
+# Diagnostic: after every direct call in the generated code, check that the
+# callee restored ebx/esi/edi and popped its return address, and log any
+# that did not (recomp_abi_violation_log in the runtime). Off by default:
+# it costs a save and a compare per call. -DBLINX2_ABI_CHECK=ON.
+option(BLINX2_ABI_CHECK "Check the callee-saved registers after every direct call" OFF)
+if(BLINX2_ABI_CHECK)
+    add_compile_definitions(RECOMP_ABI_CHECK)
+endif()
+
 # ── xboxrecomp toolkit ──────────────────────────────────────────
 #
 # Option A: xboxrecomp as a subdirectory (simplest)
@@ -36,6 +45,14 @@ set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../xboxrecomp" CACHE PATH
 # Add xboxrecomp as a subdirectory -- this builds all 6 runtime libraries
 # and provides the 'xboxrecomp' umbrella target to link against.
 add_subdirectory(${XBOXRECOMP_DIR} ${CMAKE_BINARY_DIR}/xboxrecomp)
+
+# Full debug info for the kernel library (NV2A executor, kernel bridges), so
+# RECOMP_SAMPLE_MS profiles and crash dumps name its static functions instead
+# of the nearest public symbol. Code generation is unchanged.
+option(BLINX2_KERNEL_DEBUG_INFO "Full debug info (/Zi) for the xbox_kernel library" ON)
+if(BLINX2_KERNEL_DEBUG_INFO AND MSVC)
+    target_compile_options(xbox_kernel PRIVATE /Zi)
+endif()
 
 # ── Recompiled game executable ──────────────────────────────────
 
