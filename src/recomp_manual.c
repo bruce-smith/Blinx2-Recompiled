@@ -1128,18 +1128,25 @@ void sub_00368457(void)
         uint32_t buttons = *(const uint16_t *)(mem + state + 4)
                          | ((uint32_t)mem[state + 6] << 16);   /* + analog A */
         calls++;
-        if (handle != last_handle || buttons != last_buttons
-                || (calls & 0x1F) == 1) {
-            fprintf(stderr, "  [XINPUT] GetState #%u handle=0x%08X -> %u "
-                    "packet=%u buttons=0x%04X A=%u [h+0]=%08X [h+8]=%08X "
-                    "[h+A3]=%08X\n", calls, handle, g_eax,
-                    *(const uint32_t *)(mem + state),
-                    buttons, mem[state + 6],
-                    *(const uint32_t *)(mem + handle),
-                    *(const uint32_t *)(mem + handle + 8),
-                    *(const uint32_t *)(mem + handle + 0xA3));
-            last_handle = handle;
-            last_buttons = buttons;
+        {   /* any change of the digital and all eight analog buttons */
+            static uint8_t last_an[8];
+            const uint8_t *an = mem + state + 6;
+            if (handle != last_handle || buttons != last_buttons
+                    || memcmp(an, last_an, 8) || (calls & 0x1F) == 1) {
+                fprintf(stderr, "  [XINPUT] GetState #%u handle=0x%08X -> %u "
+                        "packet=%u buttons=0x%04X A=%u "
+                        "analog=%u,%u,%u,%u,%u,%u,%u,%u [h+0]=%08X [h+8]=%08X "
+                        "[h+A3]=%08X\n", calls, handle, g_eax,
+                        *(const uint32_t *)(mem + state),
+                        buttons, mem[state + 6], an[0], an[1], an[2], an[3],
+                        an[4], an[5], an[6], an[7],
+                        *(const uint32_t *)(mem + handle),
+                        *(const uint32_t *)(mem + handle + 8),
+                        *(const uint32_t *)(mem + handle + 0xA3));
+                last_handle = handle;
+                last_buttons = buttons;
+                memcpy(last_an, an, 8);
+            }
         }
         {
             const int16_t *ax = (const int16_t *)(mem + state + 0x0E);
