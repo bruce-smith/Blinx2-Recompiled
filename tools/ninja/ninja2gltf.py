@@ -475,15 +475,50 @@ EDITOR_PARTS = {
                ("emblem", 0x4A, 0x44EC50, 0), ("glass", 0x4C, 0x44E550, 3), ("cap", 0x4E, 0x44E870, 2),
                ("band", 0x51, 0x44EB70, 10), ("tatoo", 0x52, 0x44EDB0, 12), ("tatoo2", 0x53, 0x44EDB0, 13)],
 }
+# The save (UDATA/4d530065/<save>/blinx2data.bin) holds the teams' members:
+# 0xA2-byte records, Time Sweepers from 0x4C70, Tom-Tom from 0x5918, each
+# with its name at +0x2E (sub_001DFA60 writes them). Record byte -> data.
+SAVE_TEAMS = {"ts": 0x4C70, "tg": 0x5918}
+SAVE_RECORD = 0xA2
+RECORD_TO_DATA = dict([(k, 0x3C + k) for k in range(11)] + [(0xB + k, 0x48 + k) for k in range(9)]
+                      + [(0x14, 0x52), (0x15, 0x53), (0x16, 0x47), (0x25, 0x54), (0x29, 0x51)]
+                      + [(0x17 + k, 0x55 + k) for k in range(14)] + [(0x26 + k, 0x63 + k) for k in range(3)])
+
+
+def char_data(edt=None, save=None, team="ts", slot=0):
+    """A character's editor data {offset: byte} from a preset or a save
+    record (-> data, name)."""
+    if edt is not None:
+        return {EDT_TO_DATA[k]: edt[k] for k in EDT_TO_DATA}, None
+    o = SAVE_TEAMS[team] + SAVE_RECORD * slot
+    rec = save[o:o + SAVE_RECORD]
+    name = rec[0x2E:0x4E].split(b"\0")[0].decode("latin1")
+    if not name:
+        raise SystemExit(f"no character in {team} slot {slot}")
+    return {RECORD_TO_DATA[k]: rec[k] for k in RECORD_TO_DATA}, name
+
+
+def save_members(save):
+    """[(team, slot, name)] of the characters in a save."""
+    out = []
+    for team, base in SAVE_TEAMS.items():
+        for slot in range(16):
+            o = base + SAVE_RECORD * slot
+            nm = save[o + 0x2E:o + 0x4E].split(b"\0")[0]
+            if not nm or not all(32 <= c < 127 for c in nm):
+                break
+            out.append((team, slot, nm.decode("latin1")))
+    return out
+
+
 COLOURED = {"kao", "eye", "jacket", "glove", "leg", "boot", "emblem", "glass", "metal",
             "skin", "hige", "pants", "cap"}
 
 
-def editor_textures(xbe, edt, names):
-    """A preset applied to a character's texture list -> (names, {name:
-    colour}, sliders). The team follows the list (Tom-Tom names are tom_)."""
+def editor_textures(xbe, data, names):
+    """A character's editor data applied to its texture list -> (names,
+    {name: colour}, sliders). The team follows the list (Tom-Tom: tom_)."""
     va0, raw, size = xbe_sections(xbe)[".data"]
-    data = {EDT_TO_DATA[k]: edt[k] for k in EDT_TO_DATA}
     team = "tomtom" if any("tom_" in n for n in names) else "sweeper"
     names, colours = list(names), {}
     for part, off, table, slot in EDITOR_PARTS[team]:
@@ -494,7 +529,7 @@ def editor_textures(xbe, edt, names):
         names[slot] = nm
         if part in COLOURED and data.get(off + 1):
             colours[nm.lower()] = data[off + 1]
-    sliders = [struct.unpack("b", bytes([edt[k]]))[0] for k in list(range(24, 42))]
+    sliders = [struct.unpack("b", bytes([data.get(o, 0)]))[0] for o in range(0x54, 0x66)]
     return names, colours, sliders
 
 
@@ -635,6 +670,12 @@ def main(argv=None):
                          "that fit the skeleton, as glTF animations")
     ap.add_argument("--fps", type=float, default=30.0,
                     help="motion frames per second (default 30)")
+    ap.add_argument("--save", metavar="DIR",
+                    help="with --skin: dress the character from a save (a UDATA save "
+                         "folder or its blinx2data.bin); see --team and --slot")
+    ap.add_argument("--team", choices=("ts", "tg"), default="ts",
+                    help="the save's team: ts = Time Sweepers, tg = Tom-Tom (default ts)")
+    ap.add_argument("--slot", type=int, default=0, help="the team member (default 0)")
     ap.add_argument("--edt", metavar="FILE",
                     help="with --skin: dress the character from an editor preset "
                          "(edit_char/mdl_param_list_t{s,g}NNN.edt): designs and colours")
@@ -890,6 +931,10 @@ def main(argv=None):
         parent.append(len(g.j["nodes"]) - 1)
         return nd
 
+    if args.skin and not args.objects and args.section == "MDLPL":
+        # The player characters: Time Sweeper (cat) and Tom-Tom (pig).
+        tg = args.team == "tg" if args.save else bool(args.edt and "_tg" in os.path.basename(args.edt))
+        args.objects = "0x5b7dc" if tg else "0x21e44"
     if args.objects:
         sel = [sec.va + int(x, 0) for x in args.objects.split(",")]
         part_colours.clear()
@@ -898,8 +943,17 @@ def main(argv=None):
         for r in sel:
             if args.skin:
                 names = names_of.get(r)
-                if args.edt and names:
-                    names, cols, sliders = editor_textures(xbe, open(args.edt, "rb").read(), names)
+                if (args.edt or args.save) and names:
+                    if args.edt:
+                        data, who = char_data(edt=open(args.edt, "rb").read())
+                    else:
+                        sv = open(os.path.join(args.save, "blinx2data.bin") if os.path.isdir(args.save)
+                                  else args.save, "rb").read()
+                        print("characters in the save:", ", ".join(
+                            "%s%d %s" % m for m in save_members(sv)))
+                        data, who = char_data(save=sv, team=args.team, slot=args.slot)
+                        print(f"exporting {args.team}{args.slot}: {who}")
+                    names, cols, sliders = editor_textures(xbe, data, names)
                     part_colours.update(cols)
                     print("preset textures:", ", ".join(
                         n + ("/P%02d" % cols[n.lower()] if n.lower() in cols else "") for n in names))

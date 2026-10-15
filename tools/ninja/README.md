@@ -76,6 +76,19 @@ Options:
   ```
 
   All 45 presets export with no validator errors or warnings.
+- `--save <save folder> [--team ts|tg] [--slot N]` (with `--skin`): your
+  own characters, from your save. The save folder is
+  `game_files/UDATA/4d530065/<id>` or its `blinx2data.bin`. A save holds
+  your Time Sweepers (`ts`) and your Tom-Tom gang (`tg`), each member
+  with a name, parts, colours and body sliders. The tool lists them and
+  exports the member you pick (default: the first Time Sweeper). With
+  `--save` or `--edt`, `MDLPL --skin` picks the right body by itself:
+
+  ```
+  py -3 tools/ninja/ninja2gltf.py <game_files>/default.xbe MDLPL me.glb --skin --save <game_files>/UDATA/4d530065/<id> --team ts --slot 0 --motions MOTPL,MOTP0 --assets <assets>/extracted
+  ```
+
+  The tool only reads the save.
 - `--motions MOTPL,MOTP0` (with `--skin`): the character's motions as glTF
   animations, named `<section>_<offset>`. Every motion in those sections
   that drives a skeleton of the tree's size is included: 298 for the
