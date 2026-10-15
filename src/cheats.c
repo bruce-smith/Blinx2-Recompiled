@@ -82,7 +82,7 @@ static int team_now(void)
  * little-endian arguments. The UI fills the queue; the game thread drains
  * it at the poll, applies each and records it. */
 
-enum { OP_NONE, OP_MONEY, OP_INVINCIBLE, OP_WARP, OP_FREECAM, OP_CAMPOSE, OP_ITEM };
+enum { OP_NONE, OP_MONEY, OP_INVINCIBLE, OP_WARP, OP_FREECAM, OP_CAMPOSE, OP_ITEM, OP_AMMO };
 
 typedef struct { uint8_t b[22]; } Req;
 #define QLEN 32
@@ -135,7 +135,8 @@ static void req(uint8_t op, int32_t a, int32_t b)
 
 /* ── State the game thread owns ──────────────────────────────────────── */
 
-static volatile int s_invincible;
+static volatile int s_invincible, s_ammo;
+static volatile int s_ui_ammo;
 static volatile int s_freecam, s_freecam_freeze;
 static volatile int s_ui_invincible, s_ui_freecam;   /* what the UI asked for */
 
@@ -220,6 +221,47 @@ static void invincible_tick(void)
         int16_t hp = M16(a + A_HP), mx = M16(a + A_HP_MAX);
         if (M8(a + A_CPU) == 0 && mx > 0 && hp > 0 && hp < mx)
             M16(a + A_HP) = mx;
+    }
+}
+
+/* ── Infinite ammo ──
+ *
+ * A human actor's +0x46 byte is the ammo of the weapon it holds (+0x43,
+ * the weapon's item index: 19 = slingshot, "20/20" on the HUD). While on,
+ * each human actor's ammo is held at the highest value seen for the weapon
+ * it holds, so it never goes down; a weapon change starts over. */
+#define A_WEAPON 0x43u
+#define A_AMMO   0x46u
+
+void cheats_set_infinite_ammo(int on)
+{
+    s_ui_ammo = on != 0;
+    req(OP_AMMO, on != 0, 0);
+}
+
+int cheats_infinite_ammo(void)
+{
+    return input_rec_mode() == 2 ? s_ammo : s_ui_ammo;
+}
+
+static void ammo_tick(void)
+{
+    static uint8_t weapon[ACTOR_COUNT], top[ACTOR_COUNT];
+    uint32_t i;
+    if (!s_ammo || !cheats_in_game()) {
+        memset(top, 0, sizeof top);
+        return;
+    }
+    for (i = 0; i < ACTOR_COUNT; i++) {
+        uint32_t a = ACTORS + i * ACTOR_SIZE;
+        uint8_t w = M8(a + A_WEAPON), n = M8(a + A_AMMO);
+        if (M8(a + A_CPU) != 0)
+            continue;
+        if (w != weapon[i] || n > top[i]) {
+            weapon[i] = w;
+            top[i] = n;
+        } else if (n < top[i])
+            M8(a + A_AMMO) = top[i];
     }
 }
 
@@ -538,6 +580,9 @@ static void menu_draw(void *ctx)
     v = cheats_invincible();
     if (xbox_ui_checkbox("Invincible (no damage, HP kept full)", &v))
         cheats_set_invincible(v);
+    v = cheats_infinite_ammo();
+    if (xbox_ui_checkbox("Infinite ammo (Tom-Tom weapons)", &v))
+        cheats_set_infinite_ammo(v);
 
     xbox_ui_separator();
     v = cheats_freecam_enabled();
@@ -664,6 +709,10 @@ static int apply(const Req *r)
         fprintf(stderr, "  [CHEAT] free camera %s%s\n", a ? "on" : "off",
                 a && b ? " (player frozen)" : "");
         return 1;
+    case OP_AMMO:
+        s_ammo = a != 0;
+        fprintf(stderr, "  [CHEAT] infinite ammo %s\n", a ? "on" : "off");
+        return 1;
     case OP_ITEM:
         return apply_item(a, b);
     case OP_CAMPOSE:                /* replay: the recorded free-camera pose */
@@ -684,7 +733,8 @@ void cheats_replay_event(const uint8_t *data)
 /* RECOMP_CHEAT_SCRIPT=<poll>:<cheat>[:a[:b]][;...], for tests: requests at
  * fixed polls of an input replay (poll numbers count only while input is
  * recorded or replayed). Cheats: money:<team>:<amount>, invincible:<0|1>,
- * warp:<list index>, freecam:<0|1>:<freeze>, item:<team>:<list index|-1>. They bypass the "a replay
+ * warp:<list index>, freecam:<0|1>:<freeze>, item:<team>:<list index|-1>,
+ * ammo:<0|1>. They bypass the "a replay
  * decides" rule, so do not combine them with a replay of a cheated run. */
 static void script_poll(uint32_t poll)
 {
@@ -695,14 +745,14 @@ static void script_poll(uint32_t poll)
         n = 0;
         while (s && *s && n < 32) {
             static const char *const ops[] = { "", "money", "invincible", "warp", "freecam",
-                                                "campose", "item" };
+                                                "campose", "item", "ammo" };
             char *e;
             int32_t a = 0, b = 0;
             uint8_t op = 0, k;
             sc[n].poll = (uint32_t)strtoul(s, &e, 0);
             if (*e++ != ':')
                 break;
-            for (k = 1; k < 7; k++)
+            for (k = 1; k < 8; k++)
                 if (!strncmp(e, ops[k], strlen(ops[k]))) {
                     op = k;
                     e += strlen(ops[k]);
@@ -754,4 +804,5 @@ void cheats_on_poll(uint32_t poll)
         }
     }
     invincible_tick();
+    ammo_tick();
 }

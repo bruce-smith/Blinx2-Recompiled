@@ -36,6 +36,11 @@ void cheats_give_money(int team, int amount); /* negative takes; 0..99999 */
 void cheats_set_invincible(int on);
 int  cheats_invincible(void);
 
+/* Infinite ammo: the weapon a human-controlled character holds never runs
+ * down (Tom-Tom guns, slingshot, launchers). */
+void cheats_set_infinite_ammo(int on);
+int  cheats_infinite_ammo(void);
+
 /* Free camera: the camera leaves the player and is flown with the pad or
  * keyboard (left stick move, right stick look, LT/RT down/up, hold A for
  * speed). With freeze_player the game sees no input while it is on. */
