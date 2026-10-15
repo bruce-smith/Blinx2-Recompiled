@@ -498,6 +498,68 @@ def editor_textures(xbe, edt, names):
     return names, colours, sliders
 
 
+def find_motions(sec, nodes):
+    """NJS_MOTIONs in a section for a skeleton of `nodes` nodes: mdata*,
+    u32 frames, u16 type (1 pos, 2 ang, 4 scl), u16 inp_fn (low nibble =
+    elements per node; 0x40 = 16-bit angles), directly after their mdata
+    (per node, one pointer per element, then u16 key counts)."""
+    out = []
+    d = sec.data
+    for o in range(0, sec.size - 12, 4):
+        md, nf, ty, inp = struct.unpack_from("<IIHH", d, o)
+        if not (sec.va <= md < sec.va + o and 0 < nf < 100000 and ty in (1, 2, 3, 5, 6, 7)):
+            continue
+        nel = inp & 0xF
+        if nel != bin(ty).count("1"):
+            continue
+        ent = (6 * nel + 3) & ~3
+        if sec.va + o - md == ent * nodes:
+            out.append(sec.va + o)
+    return out
+
+
+def read_motion(sec, hdr, nodes):
+    """-> frames, per node {"pos": [(f, xyz)], "ang": [(f, xyz radians)]}."""
+    md, nf, ty, inp = sec.unpack("<IIHH", hdr)
+    kinds = [k for k, bit in (("pos", 1), ("ang", 2), ("scl", 4)) if ty & bit]
+    nel = len(kinds)
+    ent = (6 * nel + 3) & ~3
+    out = []
+    for k in range(nodes):
+        e = md + ent * k
+        ptrs = sec.unpack("<%dI" % nel, e)
+        counts = sec.unpack("<%dH" % nel, e + 4 * nel)
+        keys = {}
+        for kind, p, c in zip(kinds, ptrs, counts):
+            if not p or not c:
+                continue
+            if kind == "ang" and inp & 0x40:          # u16 frame, s16 x, y, z
+                ks = [sec.unpack("<H3h", p + 8 * i) for i in range(c)]
+                keys[kind] = [(f, tuple(a * 2 * math.pi / 65536 for a in v)) for f, *v in ks]
+            elif kind == "ang":                       # u32 frame, i32 BAMS
+                ks = [sec.unpack("<I3i", p + 16 * i) for i in range(c)]
+                keys[kind] = [(f, tuple(a * 2 * math.pi / 65536 for a in v)) for f, *v in ks]
+            else:
+                ks = [sec.unpack("<I3f", p + 16 * i) for i in range(c)]
+                keys[kind] = [(f, tuple(v)) for f, *v in ks]
+        out.append(keys)
+    return nf, out
+
+
+def sample_keys(keys, frame, angles):
+    """Linear interpolation of a key list at `frame` (angles: the short way)."""
+    if frame <= keys[0][0]:
+        return np.array(keys[0][1])
+    for (f0, v0), (f1, v1) in zip(keys, keys[1:]):
+        if frame <= f1:
+            t = (frame - f0) / max(f1 - f0, 1)
+            a, b = np.array(v0), np.array(v1)
+            if angles:
+                b = a + (b - a + math.pi) % (2 * math.pi) - math.pi
+            return a + (b - a) * t
+    return np.array(keys[-1][1])
+
+
 class Glb:
     def __init__(self):
         self.bin = bytearray()
@@ -568,6 +630,11 @@ def main(argv=None):
     ap.add_argument("--skin", action="store_true",
                     help="export the --objects trees as skinned meshes (characters: "
                          "the tree is the skeleton, weighted chunks give the weights)")
+    ap.add_argument("--motions", metavar="SECTIONS",
+                    help="with --skin: the motions in these sections (e.g. MOTPL,MOTP0) "
+                         "that fit the skeleton, as glTF animations")
+    ap.add_argument("--fps", type=float, default=30.0,
+                    help="motion frames per second (default 30)")
     ap.add_argument("--edt", metavar="FILE",
                     help="with --skin: dress the character from an editor preset "
                          "(edit_char/mdl_param_list_t{s,g}NNN.edt): designs and colours")
@@ -711,6 +778,35 @@ def main(argv=None):
         skin = {"joints": list(range(first, first + len(nodes))), "skeleton": first,
                 "inverseBindMatrices": g.accessor(ibm.reshape(-1, 16), "MAT4", None)}
         g.j.setdefault("skins", []).append(skin)
+        for msec in (args.motions.split(",") if args.motions else []):
+            ms = Section(xbe, msec)
+            for hdr in find_motions(ms, len(nodes)):
+                nf, tracks = read_motion(ms, hdr, len(nodes))
+                frames = np.arange(nf, dtype=np.float32)
+                times = g.accessor((frames / args.fps).reshape(-1, 1), "SCALAR", None)
+                g.j["accessors"][times]["min"] = [0.0]
+                g.j["accessors"][times]["max"] = [float(frames[-1] / args.fps)]
+                anim = {"name": "%s_%06X" % (msec, hdr - ms.va), "channels": [], "samplers": []}
+                for k, keys in enumerate(tracks):
+                    o = nodes[k][0]
+                    for kind, path in (("pos", "translation"), ("ang", "rotation"), ("scl", "scale")):
+                        if kind not in keys:
+                            continue
+                        vals = [sample_keys(keys[kind], f, kind == "ang") for f in frames]
+                        if kind == "ang":
+                            vals = [euler_quat(v, o["flags"] & 0x20) for v in vals]
+                            for i in range(1, len(vals)):     # keep one hemisphere
+                                if np.dot(vals[i], vals[i - 1]) < 0:
+                                    vals[i] = [-c for c in vals[i]]
+                        arr = np.array(vals, np.float32)
+                        out = g.accessor(arr, "VEC4" if kind == "ang" else "VEC3", None)
+                        anim["samplers"].append({"input": times, "output": out,
+                                                 "interpolation": "LINEAR"})
+                        anim["channels"].append({"sampler": len(anim["samplers"]) - 1,
+                                                 "target": {"node": first + k, "path": path}})
+                if anim["channels"]:
+                    g.j.setdefault("animations", []).append(anim)
+            print(f"{msec}: {len([a for a in g.j.get('animations', []) if a['name'].startswith(msec)])} motions")
         prims = []
         for st, tl in tris:
             pos, nrm, uv, jo, we = [], [], [], [], []

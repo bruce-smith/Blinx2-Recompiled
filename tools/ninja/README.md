@@ -75,7 +75,15 @@ Options:
   py -3 tools/ninja/ninja2gltf.py <game_files>/default.xbe MDLPL ts004.glb --objects 0x21e44 --skin --edt <assets>/extracted/<lng>/edit_char/mdl_param_list_ts004.edt --assets <assets>/extracted
   ```
 
-  All 45 presets export with no validator errors or warnings. Not applied
+  All 45 presets export with no validator errors or warnings.
+- `--motions MOTPL,MOTP0` (with `--skin`): the character's motions as glTF
+  animations, named `<section>_<offset>`. Every motion in those sections
+  that drives a skeleton of the tree's size is included: 298 for the
+  player skeleton (~9.5 MB). The format is Ninja NJS_MOTION: position keys
+  u32 frame + 3 floats; angle keys u16 frame + 3 signed 16-bit angles. They
+  are resampled per frame with the short-way interpolation of the angles,
+  at `--fps` frames per second (default 30). The game names its motions by
+  table index only, so the names are offsets. Not applied
   yet: the body-shape sliders (preset bytes 24-41), and Tom-Tom colours
   above 19, which keep the texture's own palette.
 - `--grid <spacing>`: lay the top-level groups out in a grid. Useful for
