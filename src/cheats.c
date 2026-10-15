@@ -10,6 +10,7 @@
  */
 
 #include <stdio.h>
+#include <stddef.h>          /* ptrdiff_t; MSVC got it through stdlib.h */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
