@@ -345,8 +345,10 @@ Differences from Windows:
   with the same mapping as XInput on Windows.
 - Under gamescope (Steam Deck Game Mode, Big Picture) the window starts full
   screen; `RECOMP_FB_FULLSCREEN=1` or `=0` overrides.
-- Not yet on Linux: the in-game menu (Escape) and Vulkan presenting its own
-  swapchain (`RECOMP_VK_PRESENT`); rendering itself works on either renderer.
+- `RECOMP_VK_PRESENT=1` (Vulkan swapchain presentation) works as on Windows.
+  A CPU-only Vulkan driver (Mesa llvmpipe, e.g. under WSLg) is used only when
+  named: `RECOMP_VK_DEVICE=llvmpipe`.
+- Not yet on Linux: the in-game menu (Escape).
 
 ## Troubleshooting
 
