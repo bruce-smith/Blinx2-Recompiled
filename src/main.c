@@ -45,6 +45,14 @@
 /* xboxrecomp runtime headers */
 #include <xbox/xboxrecomp.h>
 #include "ohci.h"          /* xbox_usb: USB host controller model */
+#include "xbox_ui.h"        /* settings file, in-game menu */
+#include "build_sha.h"      /* for the menu's About text (cmake/git_sha.cmake) */
+#ifndef BLINX2_GIT_SHA
+#define BLINX2_GIT_SHA "unknown"
+#endif
+#ifndef XBOXRECOMP_GIT_SHA
+#define XBOXRECOMP_GIT_SHA "unknown"
+#endif
 
 /* The guest-CPU schedule (xboxrecomp kernel/sched.c). */
 extern int  xbox_SchedMode(void);
@@ -1170,6 +1178,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * Each is set only when unset. RECOMP_HEADLESS=1 leaves all four alone,
      * for log-only and scripted runs. */
     s_headless = getenv("RECOMP_HEADLESS") != NULL;
+
+    /* Settings from blinx2_settings.ini next to the exe, edited in the
+     * in-game menu (Escape). Not for headless runs: agents and scripts set
+     * environment variables, and a variable always wins over the file. The
+     * graphics options become the variables the runtime reads, when those
+     * are unset; they take effect at the next start. */
+    if (!s_headless) {
+        /* The runtime's default is vulkan; "software" is the reference. */
+        static const char *const gpu[] = { "vulkan", "software" };
+        char about[512];
+        xbox_settings_load("blinx2_settings.ini");
+        xbox_setting_choice("graphics", "renderer", "Renderer", gpu, 2, 0,
+                            "RECOMP_GPU", XBOX_SETTING_RESTART);
+        xbox_setting_to_env("graphics", "renderer");
+        xbox_setting_bool("graphics", "vk_present", "Present through Vulkan",
+                          0, "RECOMP_VK_PRESENT", XBOX_SETTING_RESTART);
+        xbox_setting_to_env("graphics", "vk_present");
+        snprintf(about, sizeof about,
+                 "Blinx 2: Masters of Time and Space -- static recompilation.\n"
+                 "blinx2-recomp %s, xboxrecomp %s.\n"
+                 "Settings: blinx2_settings.ini next to the exe.",
+                 BLINX2_GIT_SHA, XBOXRECOMP_GIT_SHA);
+        xbox_ui_set_about(about);
+    }
     if (!s_headless) {
         static const char *const on[] = {
             "RECOMP_PB_EXEC", "RECOMP_FB_WINDOW", "RECOMP_USB", "RECOMP_KEYBOARD"

@@ -772,6 +772,12 @@ static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
             }
         }
     }
+    {   /* Changes the in-game menu queued for guest memory (cheats): applied
+         * here, on the main thread inside its own turn, never from the
+         * window thread (xbox_ui.h). */
+        extern void xbox_ui_run_deferred(void);
+        xbox_ui_run_deferred();
+    }
     if (s_in_mode == 0)
         return;
     poll = s_in_poll++;
