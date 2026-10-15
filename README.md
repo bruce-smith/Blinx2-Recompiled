@@ -274,6 +274,38 @@ presentation, the Escape menu is not drawn over the picture yet (it still
 works, unseen); turn Vulkan presentation off to change settings until that
 is fixed.
 
+## Exporting stages and characters (glTF)
+
+`export_assets.bat` exports the game's stages and characters as glTF 2.0
+(`.glb`) files, which Blender, Unity, Unreal, Godot and most other tools and
+engines import. It reads your own copy of the game; keep the files for your
+own use.
+
+```
+export_assets.bat [game_files] [extracted assets] [output folder]
+```
+
+The defaults are your `game_files` (or `RECOMP_GAME_DIR`), the superproject's
+`assets\extracted` (the `.ipk` archives unpacked with blipks, see
+`assets\README.md`; without them nothing is textured) and `export\` here.
+It needs Python 3 with numpy and Pillow, and takes about ten minutes. Output:
+
+- `stages\`: all 26 stage sections (`M11` = stage 01-01 ... `M121`, and
+  `G1`-`G5`). Each has its textured geometry, its collision meshes (nodes
+  named `*_collision`) and the game's object placements as marker nodes with
+  the object type.
+- `characters\<save>\`: your own characters, from each save in
+  `game_files\UDATA`, as `ts0_<name>.glb` ... (Time Sweepers) and
+  `tg0_<name>.glb` ... (Tom-Tom gang). Each is dressed as you made it
+  (parts, designs, colours), rigged with the game's 147-bone skeleton, and
+  carries the game's 298 motions as animations.
+- `presets\`: the character editor's 45 stock characters, rigged.
+
+Not exported yet: the editor's body-shape sliders (characters come out with
+the default proportions), and the meshes of the placed objects (only their
+markers). The tool behind it and all its options, for example a single
+stage or character: `tools\ninja\README.md`.
+
 ## Linux and Steam Deck
 
 The game builds and runs on x86-64 Linux as well (SteamOS is a target, not yet tried). The
