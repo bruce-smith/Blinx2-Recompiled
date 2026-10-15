@@ -39,8 +39,8 @@ their textures from the texture list the game's code names next to them.
 A character or enemy tree exports in bind pose: its nodes are its bones, so
 it can be posed and animated as a node hierarchy.
 
-Not yet exported: normals (the packed normals are skipped), vertex
-weights, and prop placement. For a stage as the game shows it, props
+Normals are exported (the packed 11:11:10 normals of vertex chunk 48).
+Not yet exported: vertex weights, and prop placement. For a stage as the game shows it, props
 included, see `xboxrecomp/tools/capture`.
 
 Needs numpy and Pillow. The output is made from your own copy of the game:

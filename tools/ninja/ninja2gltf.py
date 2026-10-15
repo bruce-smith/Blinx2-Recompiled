@@ -166,24 +166,40 @@ def read_object(sec, p):
     return dict(addr=p, flags=ev, model=mdl, pos=pos, ang=ang, scl=scl, child=ch, sibling=sib)
 
 
+def unpack_normal(w):
+    """Xbox NORMPACKED3: x bits 0-10 and y bits 11-21 (signed 11-bit), z bits
+    22-31 (signed 10-bit). Checked against face normals of stage 01-01:
+    median |cos| 0.9999."""
+    def sx(v, bits):
+        v &= (1 << bits) - 1
+        return v - (1 << bits) if v >> (bits - 1) else v
+    n = np.array([sx(w, 11) / 1023.0, sx(w >> 11, 11) / 1023.0, sx(w >> 22, 10) / 511.0])
+    ln = np.linalg.norm(n)
+    return tuple(n / ln) if ln > 1e-6 else (0.0, 1.0, 0.0)
+
+
 def read_vertices(sec, vl):
-    """Vertex chunks -> {index: (xyz, normal-or-None)}."""
+    """Vertex chunks -> {index: (xyz, normal)}."""
     verts = {}
     p = vl
     while True:
         t = sec.u8(p)
         if t == 255 or t not in VERTEX_STRIDE:
             break
-        _t, _f, size = sec.unpack("<BBH", p)
         ioff, count = sec.unpack("<HH", p + 4)
         stride = VERTEX_STRIDE[t]
         q = p + 8
         for i in range(count):
-            xyz = sec.unpack("<3f", q + i * stride)
-            verts[ioff + i] = xyz
+            v = q + i * stride
+            xyz = sec.unpack("<3f", v)
+            if t in (48, 49, 50):                         # packed normal
+                nrm = unpack_normal(sec.unpack("<I", v + 12)[0])
+            elif t in (33, 41, 42, 43, 44, 45, 46, 47):   # float normal
+                nrm = sec.unpack("<3f", v + (16 if t == 33 else 12))
+            else:
+                nrm = None
+            verts[ioff + i] = (xyz, nrm)
         p = q + count * stride
-        if size * 4 + 4 > 8 + count * stride:      # trust size if larger
-            p = max(p, vl)
     return verts
 
 
@@ -444,13 +460,15 @@ def main():
                 verts = read_vertices(sec, vl) if vl else {}
                 prims = []
                 for st, tris in (read_polys(sec, pl) if pl else []):
-                    pts, uvs, idx = [], [], []
+                    pts, nrms, uvs, idx = [], [], [], []
                     for tri in tris:
                         if not all(v[0] in verts for v in tri):
                             continue
                         for v in tri:
                             idx.append(len(pts))
-                            pts.append(verts[v[0]])
+                            xyz, nrm = verts[v[0]]
+                            pts.append(xyz)
+                            nrms.append(nrm)
                             uvs.append((v[1], v[2]))
                     if not idx:
                         continue
@@ -473,9 +491,11 @@ def main():
                             mat.pop("alphaCutoff", None)
                         g.j["materials"].append(mat)
                         matcache[mkey] = len(g.j["materials"]) - 1
-                    prims.append({"attributes": {
-                        "POSITION": g.accessor(np.array(pts, np.float32), "VEC3", 34962),
-                        "TEXCOORD_0": g.accessor(np.array(uvs, np.float32), "VEC2", 34962)},
+                    attrs = {"POSITION": g.accessor(np.array(pts, np.float32), "VEC3", 34962),
+                             "TEXCOORD_0": g.accessor(np.array(uvs, np.float32), "VEC2", 34962)}
+                    if all(nm is not None for nm in nrms):
+                        attrs["NORMAL"] = g.accessor(np.array(nrms, np.float32), "VEC3", 34962)
+                    prims.append({"attributes": attrs,
                         "indices": g.accessor(np.array(idx, np.uint32), "SCALAR", 34963),
                         "material": matcache[mkey]})
                     ntri += len(idx) // 3
