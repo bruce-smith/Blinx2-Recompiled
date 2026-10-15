@@ -14,7 +14,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exe=""
-for c in "$here/build/blinx_2_recomp" "$here/build/Release/blinx_2_recomp" \
+for c in "$here/build-linux/blinx_2_recomp" "$here/build/blinx_2_recomp" "$here/build/Release/blinx_2_recomp" \
          "$here/blinx_2_recomp"; do
     [ -x "$c" ] && { exe="$c"; break; }
 done

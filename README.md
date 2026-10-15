@@ -233,6 +233,50 @@ Environment variables, set before starting the exe:
 | `RECOMP_HEADLESS=1` | No window, no dialogs (for scripted runs). |
 | `RECOMP_WATCHDOG_STALL=<s>` | Dump diagnostics and exit if no frame is presented for `<s>` seconds. |
 
+## Linux and Steam Deck
+
+The game builds and runs on x86-64 Linux as well (SteamOS is a target, not yet tried). The
+recompiled C and the toolkit are the same; the host side uses SDL2 for the
+window, keyboard, pads and sound. Status: it runs headless (intro movies,
+title, the stage 01-01 attract demo at 30 fps in the software renderer);
+the window, pad, sound and the Vulkan renderer have not yet
+been tried on a real Linux desktop or a Deck.
+
+**Build natively** (Ubuntu/Debian package names; the generated C must be in
+`src/recomp/gen`, see above -- the Python pipeline runs on Linux too, with
+`python3` instead of `py -3`):
+
+```
+sudo apt install build-essential cmake ninja-build pkg-config \
+    libsdl2-dev libvulkan-dev libssl-dev libepoxy-dev libgl-dev
+cd <root>/blinx2-recomp
+cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-linux
+```
+
+Or **in Docker**, reproducibly: `linux/build-in-docker.sh` (gcc; pass `clang`
+for clang). The compile of the generated C takes about 5 minutes on 12
+cores. A container-built executable needs glibc 2.39 or newer where it runs.
+
+**Run**: `./play.sh` (Vulkan by default, falling back to software), `./play_software.sh`
+(software renderer), `./record_blinx2.sh` and
+`./replay_blinx2.sh <folder> [window]` -- the `.bat` files' counterparts. Put
+the game files in `build-linux/game_files` or point `RECOMP_GAME_DIR` at them.
+
+Differences from Windows:
+
+- Saves (UDATA/TDATA) are in the game files folder as on Windows; the Z:
+  cache is in `$XDG_DATA_HOME/xboxrecomp` (`~/.local/share/xboxrecomp`).
+  Logs and `blinx2_settings.ini` are next to the executable, or in
+  `$XDG_STATE_HOME/blinx2-recomp` if that folder is read-only.
+- File names are matched ignoring case, as on the console.
+- Pads: anything SDL2 knows (Steam Deck controls, Xbox and PlayStation pads),
+  with the same mapping as XInput on Windows.
+- Under gamescope (Steam Deck Game Mode, Big Picture) the window starts full
+  screen; `RECOMP_FB_FULLSCREEN=1` or `=0` overrides.
+- Not yet on Linux: the in-game menu (Escape) and Vulkan presenting its own
+  swapchain (`RECOMP_VK_PRESENT`); rendering itself works on either renderer.
+
 ## Troubleshooting
 
 - **"Failed to load ...\default.xbe"**: the game files are not where the

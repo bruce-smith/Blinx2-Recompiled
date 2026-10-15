@@ -129,15 +129,21 @@ static char g_game_dir[MAX_PATH];
 static char g_xbe_path[MAX_PATH];
 
 #if !defined(_WIN32)
+/* The executable's folder; the working directory may be elsewhere (see the
+ * read-only case in WinMain). */
+static char g_exe_dir[4096] = ".";
+
 static void resolve_game_dir(void)
 {
     const char *env = getenv("RECOMP_GAME_DIR");
+    char next_to_exe[4096 + 32];
     size_t n;
 
+    snprintf(next_to_exe, sizeof next_to_exe, "%s/game_files", g_exe_dir);
     if (env && *env)
         snprintf(g_game_dir, sizeof g_game_dir, "%s", env);
-    else if (access("game_files/default.xbe", R_OK) != 0
-             || !realpath("game_files", g_game_dir))
+    else if (snprintf(g_xbe_path, sizeof g_xbe_path, "%s/default.xbe", next_to_exe),
+             access(g_xbe_path, R_OK) != 0 || !realpath(next_to_exe, g_game_dir))
         snprintf(g_game_dir, sizeof g_game_dir, "%s", BLINX2_GAME_DIR_DEFAULT);
     n = strlen(g_game_dir);
     while (n > 1 && g_game_dir[n - 1] == '/')
@@ -1238,9 +1244,32 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             slash = strrchr(path, '/');
             if (slash && slash != path) {
                 *slash = 0;
+                snprintf(g_exe_dir, sizeof g_exe_dir, "%s", path);
                 if (chdir(path) != 0)
                     perror("chdir");
             }
+        }
+        /* A read-only install (AppImage, a system or Flatpak install): the
+         * logs, the input recording and blinx2_settings.ini go to
+         * $XDG_STATE_HOME/blinx2-recomp (~/.local/state/blinx2-recomp)
+         * instead. Saves are elsewhere already (XDG data dir, game_files). */
+        if (access(".", W_OK) != 0) {
+            const char *st = getenv("XDG_STATE_HOME"), *home = getenv("HOME");
+            char dir[4096], *p;
+            if (st && *st)
+                snprintf(dir, sizeof dir, "%s/blinx2-recomp", st);
+            else
+                snprintf(dir, sizeof dir, "%s/.local/state/blinx2-recomp",
+                         home && *home ? home : "/tmp");
+            for (p = dir + 1; *p; p++)
+                if (*p == '/') {
+                    *p = 0;
+                    mkdir(dir, 0755);
+                    *p = '/';
+                }
+            mkdir(dir, 0755);
+            if (chdir(dir) != 0)
+                perror(dir);
         }
 #endif
     }
