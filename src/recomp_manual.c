@@ -1420,7 +1420,7 @@ void sub_0019B790(void)
  * angles, then its eye; into 0xA72380, D3D's view, and the inverse at
  * 0xA9C220). The free camera substitutes its pose for this one build and
  * puts the game's camera back afterwards. */
-extern __declspec(thread) uint32_t g_ebx;
+extern RECOMP_MANUAL_TLS uint32_t g_ebx;
 extern void sub_000292A0_gen(void);
 
 void sub_000292A0(void)

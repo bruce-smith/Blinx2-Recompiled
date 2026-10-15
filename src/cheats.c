@@ -14,15 +14,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#if defined(_MSC_VER)
 #include <intrin.h>
+#define CHEATS_TLS __declspec(thread)
+#else
+#define CHEATS_TLS __thread
+#define _InterlockedExchange(p, v) __atomic_exchange_n((p), (v), __ATOMIC_SEQ_CST)
+#endif
 
 #include "cheats.h"
+#include "xbox_ui.h"        /* the in-game menu's panel */
 
 extern ptrdiff_t g_xbox_mem_offset;
-extern __declspec(thread) uint32_t g_eax, g_ecx, g_edx, g_esp;
-extern __declspec(thread) uint32_t g_ebx, g_esi, g_edi, g_ebp;
-extern __declspec(thread) double g_fp_stack[8];
-extern __declspec(thread) int g_fp_top;
+extern CHEATS_TLS uint32_t g_eax, g_ecx, g_edx, g_esp;
+extern CHEATS_TLS uint32_t g_ebx, g_esi, g_edi, g_ebp;
+extern CHEATS_TLS double g_fp_stack[8];
+extern CHEATS_TLS int g_fp_top;
 
 /* recomp_manual.c: the input recording */
 int  input_rec_mode(void);          /* 0 off, 1 recording, 2 replaying */
@@ -75,7 +82,7 @@ static int team_now(void)
  * little-endian arguments. The UI fills the queue; the game thread drains
  * it at the poll, applies each and records it. */
 
-enum { OP_NONE, OP_MONEY, OP_INVINCIBLE, OP_WARP, OP_FREECAM, OP_CAMPOSE };
+enum { OP_NONE, OP_MONEY, OP_INVINCIBLE, OP_WARP, OP_FREECAM, OP_CAMPOSE, OP_ITEM };
 
 typedef struct { uint8_t b[22]; } Req;
 #define QLEN 32
@@ -288,6 +295,124 @@ static int apply_warp(int i)
     return 1;
 }
 
+/* ── Items ──
+ *
+ * Shop/locker items are owned per team: each team block (record +0x65C0
+ * Sweepers, +0x746C Tom-Toms) holds one state byte per item in each
+ * category -- 0 not owned, 0x10 owned (what the new-game kit sets,
+ * sub_0001E960; 2/4 are "just bought" marks the locker turns into 0x10,
+ * sub_001C2310 / sub_0001FFD0). Definitions (0x4C bytes: price +0x30,
+ * index +0x34, category +0x38) are in the tables below; names come from the
+ * shop's icon names (e.g. shp_i_cleaner_fire) and models. */
+typedef struct { uint8_t cat, idx; const char *name; } Item;
+static const struct { uint16_t state; uint32_t defs; uint8_t n; } s_cats[] = {
+    { 0x74,  0x4938D0u, 43 },   /* cleaners (Sweepers), weapons (Tom-Toms) */
+    { 0xB4,  0x494598u, 22 },   /* gadgets and bombs */
+    { 0xF4,  0x494C20u, 23 },   /* packs, attachments, food and drink */
+    { 0x114, 0x4952F8u, 38 },   /* clothing and accessories */
+};
+static const Item s_items[] = {
+    { 0, 1, "Cleaner Lv1" }, { 0, 2, "Cleaner Lv1 (black)" },
+    { 0, 3, "Classic cleaner" }, { 0, 4, "Attack cleaner" },
+    { 0, 5, "Time cleaner" }, { 0, 6, "Cleaner 2nd" }, { 0, 7, "V cleaner" },
+    { 0, 8, "Fire cleaner" }, { 0, 9, "Freeze cleaner" },
+    { 0, 10, "X-Blinx cleaner" }, { 0, 11, "W cleaner" }, { 0, 12, "Fish cleaner" },
+    { 0, 13, "Cleaner 3rd" }, { 0, 14, "G cleaner" }, { 0, 15, "Legend cleaner" },
+    { 0, 16, "Bazooka" }, { 0, 17, "Bat" }, { 0, 18, "Hammer" },
+    { 0, 19, "Slingshot" }, { 0, 20, "Handgun" }, { 0, 21, "Machine gun" },
+    { 0, 22, "Missile launcher S" }, { 0, 23, "Missile launcher M" },
+    { 0, 24, "Ray gun" }, { 0, 25, "Flame gun" }, { 0, 26, "Rifle" },
+    { 0, 27, "Shotgun" }, { 0, 28, "Sniper rifle" }, { 0, 29, "Water gun" },
+    { 0, 30, "Landmine" }, { 0, 31, "Bomb switch" }, { 0, 32, "Grenade launcher" },
+    { 0, 36, "Crossbow" }, { 0, 37, "Sol gun" }, { 0, 38, "Washtub" },
+    { 0, 39, "Slipper" }, { 0, 41, "Rocket fist" }, { 0, 42, "Cat jar" },
+    { 1, 1, "Tom-Tom decoy" }, { 1, 2, "Banana" }, { 1, 3, "Mochi" },
+    { 1, 4, "Barrel" }, { 1, 5, "Time grenade" }, { 1, 6, "Smoke grenade" },
+    { 1, 7, "Grenade" }, { 1, 8, "Bucket" }, { 1, 9, "Pit hole" },
+    { 1, 10, "Dive hole" }, { 1, 12, "Bomber" }, { 1, 13, "Kutuki bomb" },
+    { 1, 14, "Missile" }, { 1, 15, "Spike ball" }, { 1, 16, "Fire bomb" },
+    { 1, 17, "Bomber x3" }, { 1, 18, "Kutuki bomb x3" }, { 1, 19, "Missile x3" },
+    { 1, 20, "Spike ball x3" }, { 1, 21, "Fire bomb x3" },
+    { 2, 3, "Sweeper pack S" }, { 2, 4, "Sweeper pack M" }, { 2, 5, "Sweeper pack L" },
+    { 2, 6, "Combo cartridge" }, { 2, 7, "Silencer" }, { 2, 8, "Laser sight" },
+    { 2, 10, "Smoothie" }, { 2, 12, "Sports drink" }, { 2, 13, "Cookies" },
+    { 2, 14, "Sports drink (Tom-Tom)" }, { 2, 15, "Cookies (Tom-Tom)" },
+    { 2, 16, "Meat S" }, { 2, 17, "Meat M" }, { 2, 18, "Meat L" },
+    { 2, 19, "Milk S" }, { 2, 20, "Milk M" }, { 2, 21, "Milk L" },
+    { 3, 1, "Goggles (red)" }, { 3, 2, "Goggles (blue)" }, { 3, 3, "Goggles (yellow)" },
+    { 3, 4, "Goggles 2 (red)" }, { 3, 5, "Goggles 2 (blue)" },
+    { 3, 6, "Goggles 2 (yellow)" }, { 3, 7, "Metal piercing" },
+    { 3, 8, "Square piercing 1" }, { 3, 9, "Square piercing 2" },
+    { 3, 10, "Square piercing 3" }, { 3, 11, "Square piercing 4" },
+    { 3, 12, "Square piercing 5" }, { 3, 13, "Horn piercing 1" },
+    { 3, 14, "Horn piercing 2" }, { 3, 15, "Horn piercing 3" },
+    { 3, 16, "Horn piercing 4" }, { 3, 17, "Horn piercing 5" },
+    { 3, 18, "Santa outfit" }, { 3, 19, "Tiger set (yellow)" },
+    { 3, 20, "Tiger set (white)" }, { 3, 21, "Leopard set (brown)" },
+    { 3, 22, "Leopard set (black)" }, { 3, 23, "Mask" },
+    { 3, 24, "Spiral glasses" }, { 3, 25, "Surprise glasses" },
+    { 3, 26, "Eye glasses" }, { 3, 27, "Heart glasses" }, { 3, 28, "Viking helmet" },
+    { 3, 29, "Net helmet" }, { 3, 30, "Pirate hat" }, { 3, 31, "Sailor hat" },
+    { 3, 33, "Raccoon cap" }, { 3, 34, "GS set" }, { 3, 35, "Leather set" },
+    { 3, 36, "Baseball cap" }, { 3, 37, "Cleaning set" },
+};
+#define N_ITEMS ((int)(sizeof s_items / sizeof s_items[0]))
+#define ITEM_OWNED 0x10u
+
+int cheats_item_count(void) { return N_ITEMS; }
+
+const char *cheats_item_name(int i)
+{
+    return i >= 0 && i < N_ITEMS ? s_items[i].name : NULL;
+}
+
+static uint32_t item_state(int team, int i)
+{
+    uint32_t rec = M32(G_RECORD);
+    if (!rec || i < 0 || i >= N_ITEMS)
+        return 0;
+    return rec + (team ? 0x746Cu : 0x65C0u) + s_cats[s_items[i].cat].state + s_items[i].idx;
+}
+
+int cheats_item_owned(int team, int i)
+{
+    uint32_t at;
+    if (team < 0)
+        team = team_now();
+    at = item_state(team, i);
+    return at ? M8(at) != 0 : -1;
+}
+
+void cheats_give_item(int team, int i)
+{
+    if (i >= 0 && i < N_ITEMS)
+        req(OP_ITEM, team, i);
+}
+
+void cheats_give_all_items(int team)
+{
+    req(OP_ITEM, team, -1);
+}
+
+static int apply_item(int team, int i)
+{
+    int k, n = 0;
+    if (!M32(G_RECORD))
+        return 0;
+    if (team < 0)
+        team = team_now();
+    for (k = i < 0 ? 0 : i; k < N_ITEMS && (i < 0 || k == i); k++) {
+        uint32_t at = item_state(team, k);
+        if (at && M8(at) == 0) {
+            M8(at) = ITEM_OWNED;
+            n++;
+        }
+    }
+    fprintf(stderr, "  [CHEAT] items: %s %s (%d new)\n", team ? "Tom-Toms" : "Sweepers",
+            i < 0 ? "everything" : s_items[i].name, n);
+    return 1;
+}
+
 /* ── Free camera ── */
 
 void cheats_freecam_enable(int on, int freeze_player)
@@ -371,6 +496,94 @@ void cheats_view_end(uint32_t cam)
             MF(cam + 4 * k) = s_saved[k];
 }
 
+/* ── The in-game menu's Cheats panel (xbox_ui.h, window thread) ─────────
+ *
+ * Everything here only reads guest memory or queues a request; the game
+ * thread applies the requests. */
+static void menu_draw(void *ctx)
+{
+    static int team = 0, amount = 10000, stage = 0, freeze = 1;
+    static const char *const teams[] = { "Time Sweepers", "Tom-Tom Gang" };
+    static const char *names[N_STAGES];
+    int v;
+    (void)ctx;
+    if (!names[0]) {
+        int i;
+        for (i = 0; i < N_STAGES; i++)
+            names[i] = s_stages[i].name;
+    }
+    if (input_rec_mode() == 2) {
+        xbox_ui_text("An input replay is running: it applies the cheats it recorded.");
+        return;
+    }
+    if (!cheats_in_game())
+        xbox_ui_text("Not in a stage or hub: warp, invincibility and the free camera "
+                     "wait until play starts.");
+
+    xbox_ui_separator();
+    if (cheats_get_money(0) >= 0)
+        xbox_ui_text("Money: Time Sweepers %d G, Tom-Tom Gang %d G",
+                     cheats_get_money(0), cheats_get_money(1));
+    else
+        xbox_ui_text("Money: no save loaded yet");
+    xbox_ui_combo("Team", &team, teams, 2);
+    xbox_ui_input_int("Amount", &amount);
+    if (xbox_ui_button("Give money"))
+        cheats_give_money(team, amount);
+    xbox_ui_same_line();
+    if (xbox_ui_button("Max money"))
+        cheats_give_money(team, MONEY_MAX);
+
+    xbox_ui_separator();
+    v = cheats_invincible();
+    if (xbox_ui_checkbox("Invincible (no damage, HP kept full)", &v))
+        cheats_set_invincible(v);
+
+    xbox_ui_separator();
+    v = cheats_freecam_enabled();
+    if (xbox_ui_checkbox("Free camera", &v))
+        cheats_freecam_enable(v, freeze);
+    xbox_ui_same_line();
+    if (xbox_ui_checkbox("Freeze the player", &freeze) && cheats_freecam_enabled())
+        cheats_freecam_enable(1, freeze);
+    xbox_ui_text("Left stick move, right stick look, LT/RT down/up, hold A for speed "
+                 "(keyboard: numpad, I/J/K/L, 1/3, Z).");
+
+    xbox_ui_separator();
+    {
+        static int item = 0;
+        static const char *inames[N_ITEMS];
+        int own;
+        if (!inames[0]) {
+            int i;
+            for (i = 0; i < N_ITEMS; i++)
+                inames[i] = s_items[i].name;
+        }
+        xbox_ui_combo("Item", &item, inames, N_ITEMS);
+        own = cheats_item_owned(team, item);
+        xbox_ui_text("%s: %s", teams[team], own < 0 ? "no save loaded"
+                     : own ? "owned" : "not owned");
+        if (xbox_ui_button("Give item"))
+            cheats_give_item(team, item);
+        xbox_ui_same_line();
+        if (xbox_ui_button("Give every item"))
+            cheats_give_all_items(team);
+        xbox_ui_text("Items go to the team chosen above (shop and locker).");
+    }
+
+    xbox_ui_separator();
+    xbox_ui_combo("Stage", &stage, names, N_STAGES);
+    if (xbox_ui_button("Warp to stage"))
+        cheats_warp_stage(stage);
+    xbox_ui_text("Warps with the game's own stage change, as the hub does; "
+                 "unsaved progress in the current stage is lost.");
+}
+
+void cheats_menu_register(void)
+{
+    xbox_ui_add_panel("cheats", NULL, menu_draw, NULL);
+}
+
 /* ── RECOMP_CHEAT_TRACE: dev tool for finding game state ───────────────
  *
  * RECOMP_CHEAT_TRACE=<va>,<len>,<file>[;<va>,<len>,<file>...] appends, at
@@ -451,6 +664,8 @@ static int apply(const Req *r)
         fprintf(stderr, "  [CHEAT] free camera %s%s\n", a ? "on" : "off",
                 a && b ? " (player frozen)" : "");
         return 1;
+    case OP_ITEM:
+        return apply_item(a, b);
     case OP_CAMPOSE:                /* replay: the recorded free-camera pose */
         memcpy(s_cam, r->b + 1, sizeof s_cam);
         s_cam_valid = 1;
@@ -469,7 +684,7 @@ void cheats_replay_event(const uint8_t *data)
 /* RECOMP_CHEAT_SCRIPT=<poll>:<cheat>[:a[:b]][;...], for tests: requests at
  * fixed polls of an input replay (poll numbers count only while input is
  * recorded or replayed). Cheats: money:<team>:<amount>, invincible:<0|1>,
- * warp:<list index>, freecam:<0|1>:<freeze>. They bypass the "a replay
+ * warp:<list index>, freecam:<0|1>:<freeze>, item:<team>:<list index|-1>. They bypass the "a replay
  * decides" rule, so do not combine them with a replay of a cheated run. */
 static void script_poll(uint32_t poll)
 {
@@ -479,14 +694,15 @@ static void script_poll(uint32_t poll)
         const char *s = getenv("RECOMP_CHEAT_SCRIPT");
         n = 0;
         while (s && *s && n < 32) {
-            static const char *const ops[] = { "", "money", "invincible", "warp", "freecam" };
+            static const char *const ops[] = { "", "money", "invincible", "warp", "freecam",
+                                                "campose", "item" };
             char *e;
             int32_t a = 0, b = 0;
             uint8_t op = 0, k;
             sc[n].poll = (uint32_t)strtoul(s, &e, 0);
             if (*e++ != ':')
                 break;
-            for (k = 1; k < 5; k++)
+            for (k = 1; k < 7; k++)
                 if (!strncmp(e, ops[k], strlen(ops[k]))) {
                     op = k;
                     e += strlen(ops[k]);

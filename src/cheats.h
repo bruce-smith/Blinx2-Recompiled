@@ -42,11 +42,21 @@ int  cheats_invincible(void);
 void cheats_freecam_enable(int on, int freeze_player);
 int  cheats_freecam_enabled(void);
 
+/* Shop and locker items, per team (owned or not). */
+int         cheats_item_count(void);
+const char *cheats_item_name(int i);
+int         cheats_item_owned(int team, int i);   /* -1 if no save loaded */
+void        cheats_give_item(int team, int i);
+void        cheats_give_all_items(int team);
+
 /* Stage warp. The list is the game's own stage table; warping uses the
  * game's own stage-change routine, as the hub does when a mission starts. */
 int         cheats_stage_count(void);
 const char *cheats_stage_name(int i);
 int         cheats_warp_stage(int i);         /* 0 queued, -1 bad index */
+
+/* Adds the Cheats panel to the in-game menu (main.c, at start). */
+void cheats_menu_register(void);
 
 /* ── for recomp_manual.c ── */
 

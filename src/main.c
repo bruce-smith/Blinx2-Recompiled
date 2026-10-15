@@ -57,6 +57,7 @@
 #include <xbox/xboxrecomp.h>
 #include "ohci.h"          /* xbox_usb: USB host controller model */
 #include "xbox_ui.h"        /* settings file, in-game menu */
+#include "cheats.h"         /* the menu's Cheats tab */
 #include "build_sha.h"      /* for the menu's About text (cmake/git_sha.cmake) */
 #ifndef BLINX2_GIT_SHA
 #define BLINX2_GIT_SHA "unknown"
@@ -1351,6 +1352,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                  "Settings: blinx2_settings.ini next to the exe.",
                  BLINX2_GIT_SHA, XBOXRECOMP_GIT_SHA);
         xbox_ui_set_about(about);
+        cheats_menu_register();         /* the Cheats tab (cheats.c) */
     }
     if (!s_headless) {
         static const char *const on[] = {
