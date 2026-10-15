@@ -441,6 +441,16 @@ void cheats_give_all_items(int team)
     req(OP_ITEM, team, -1);
 }
 
+/* One item to a team; 1 if it was not owned. */
+static int give_one(int team, int k)
+{
+    uint32_t at = item_state(team, k);
+    if (!at || M8(at) != 0)
+        return 0;
+    M8(at) = ITEM_OWNED;
+    return 1;
+}
+
 static int apply_item(int team, int i)
 {
     int k, n = 0;
@@ -448,13 +458,11 @@ static int apply_item(int team, int i)
         return 0;
     if (team < 0)
         team = team_now();
-    for (k = i < 0 ? 0 : i; k < N_ITEMS && (i < 0 || k == i); k++) {
-        uint32_t at = item_state(team, k);
-        if (at && M8(at) == 0) {
-            M8(at) = ITEM_OWNED;
-            n++;
-        }
-    }
+    if (i >= 0)
+        n = give_one(team, i);
+    else
+        for (k = 0; k < N_ITEMS; k++)
+            n += give_one(team, k);
     fprintf(stderr, "  [CHEAT] items: %s %s (%d new)\n", team ? "Tom-Toms" : "Sweepers",
             i < 0 ? "everything" : s_items[i].name, n);
     return 1;
