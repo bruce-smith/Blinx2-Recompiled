@@ -27,6 +27,13 @@ set "RECOMP_SAVE_DIR=%SAVE%"
 set "RECOMP_SCHED_REPLAY=%REC%\schedule.sched"
 set "RECOMP_INPUT_REPLAY=%REC%\input.rec"
 set "RECOMP_INPUT_RECORD=0"
+rem The renderer the recording was made with: Vulkan when its game.log says
+rem "[GPU] renderer: vulkan", else software. A run replays exactly only with
+rem its own renderer, and recordings from before Vulkan became the default
+rem (2026-10-14) were all made in software.
+set "RECOMP_GPU=software"
+if exist "%REC%\game.log" findstr /C:"[GPU] renderer: vulkan" "%REC%\game.log" >nul && set "RECOMP_GPU=vulkan"
+echo Renderer: %RECOMP_GPU%
 
 cd /d "%EXE_DIR%"
 if /i "%~2"=="window" (

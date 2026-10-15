@@ -23,19 +23,22 @@ Playable through the early game: the intro movies, the title screen, the
 Time Sweeper hub, stage 01-01 and the first Tom-Tom Gang stages (including
 the Subspace Dive gadget).
 
-- **Graphics:** a software NV2A renderer that executes the game's
-  pushbuffer, with parallel, SIMD rasterisation, register combiners, stencil,
-  bump-environment mapping and render-to-texture. About 30 fps in the hub
-  and stage 01-01 on a fast multi-core desktop CPU. A Vulkan GPU backend is
-  in progress.
+- **Graphics:** the game's NV2A pushbuffer is executed and drawn on the GPU
+  through Vulkan (the default): 30 fps in the hub, stage 01-01 and the rainy
+  stage 01-03. Where Vulkan is unavailable, or the GPU is lost mid-game,
+  the game renders with the software NV2A renderer instead: parallel, SIMD
+  rasterisation with register combiners, stencil, bump-environment mapping
+  and render-to-texture. That renderer is the reference
+  (`play_software.bat`), and on a fast multi-core CPU it holds about 30 fps
+  in the hub and stage 01-01.
 - **Audio:** the APU's voice processor is emulated and played through
   XAudio2. Music, effects and movie sound work. The DSP effects (reverb)
   are not emulated; Blinx 2 does not appear to use them.
 - **Input:** keyboard and XInput pads.
 - **Saves** work.
-- **Known issues:** busy scenes such as the rainy stage 01-03 can still dip
-  into the low 20s fps; later parts of the game are largely untested. Rendering is
-  done on the CPU, so a slow or low-core-count CPU gives a low frame rate.
+- **Known issues:** later parts of the game are largely untested. With the
+  software renderer, busy scenes such as stage 01-03's rain dip into the low
+  20s fps, and a slow or low-core-count CPU gives a low frame rate.
 
 ## Legal
 
@@ -165,7 +168,13 @@ regeneration is a full rebuild again.
 ## Running
 
 Double-click `build\Release\blinx_2_recomp.exe`. It opens a window, with sound
-and keyboard/pad input on.
+and keyboard/pad input on, and draws with Vulkan on your graphics card.
+
+`play_software.bat` plays the same way with the software renderer, the
+reference: use it if something looks wrong on Vulkan, to tell a renderer bug
+from a game bug. Without a usable Vulkan driver the exe falls back to the
+software renderer by itself. The log's `[GPU] renderer:` line says which
+renderer ran, and why.
 
 ### Controls
 
@@ -204,7 +213,8 @@ filtering.
   pad input, the guest thread schedule and what the game read from the host
   clock.
 - `replay_blinx2.bat <recording folder> [window]` replays it exactly,
-  headless by default, from a private copy of the recorded saves. It is
+  headless by default, from a private copy of the recorded saves, and with
+  the renderer the recording was made with (from its `game.log`). It is
   useful to reproduce a bug.
 
 ### Useful switches
@@ -215,10 +225,11 @@ Environment variables, set before starting the exe:
 |---|---|
 | `RECOMP_GAME_DIR=<dir>` | Folder with `default.xbe` and the archives. |
 | `RECOMP_SAVE_DIR=<dir>` | Keep saves and cache in `<dir>` instead. |
+| `RECOMP_GPU=software` | Software renderer, the reference (`play_software.bat`). The default is Vulkan, with software as the fallback. |
 | `RECOMP_AUDIO=0` | No sound. |
 | `RECOMP_FB_SCALE=<n>`, `RECOMP_FB_FILTER=linear` | Initial window scale and filter. |
-| `RECOMP_RASTER_THREADS=<n>` | Raster worker threads (default: CPU count minus 4). |
-| `RECOMP_ASYNC_SYNC=0` | Fully drain the renderer at sync points (slower; for troubleshooting). |
+| `RECOMP_RASTER_THREADS=<n>` | Software renderer: raster worker threads (default: CPU count minus 4). |
+| `RECOMP_ASYNC_SYNC=0` | Software renderer: fully drain at sync points (slower; for troubleshooting). |
 | `RECOMP_HEADLESS=1` | No window, no dialogs (for scripted runs). |
 | `RECOMP_WATCHDOG_STALL=<s>` | Dump diagnostics and exit if no frame is presented for `<s>` seconds. |
 
@@ -234,8 +245,13 @@ Environment variables, set before starting the exe:
   `--exclude-manual` as shown.
 - **Unresolved externals like `recomp_0042.c`**: the set of generated files
   changed. Rerun the CMake configure step.
-- **Low frame rate**: rendering runs on the CPU. Close other heavy programs;
+- **Low frame rate**: check the log's `[GPU] renderer:` line. If it says
+  software (no usable Vulkan driver, or `RECOMP_GPU=software`), rendering
+  runs on the CPU: update the graphics driver, close other heavy programs;
   more cores help.
+- **Something looks wrong**: try `play_software.bat`. If the software
+  renderer shows it correctly, it is a Vulkan renderer bug; please report
+  it with both logs.
 - **A crash**: the game shows a message box and writes the details (guest
   registers, call stack) to `blinx2_recomp.log`.
 
