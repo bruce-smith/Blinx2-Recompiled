@@ -226,10 +226,12 @@ static void invincible_tick(void)
 
 /* ── Infinite ammo ──
  *
- * A human actor's +0x46 byte is the ammo of the weapon it holds (+0x43,
- * the weapon's item index: 19 = slingshot, "20/20" on the HUD). While on,
- * each human actor's ammo is held at the highest value seen for the weapon
- * it holds, so it never goes down; a weapon change starts over. */
+ * A character carries three weapons: item indexes at +0x43..+0x45 (19 =
+ * slingshot), their ammo at +0x46..+0x48 ("20/20" on the HUD; the ammo
+ * pickup, sub_0008CF70 at 0x8D24E, fills them per slot up to
+ * sub_00093F20(actor, slot)). While on, each slot of a human actor is held
+ * at the highest value seen for the weapon in it, so it never goes down; a
+ * weapon change starts over. */
 #define A_WEAPON 0x43u
 #define A_AMMO   0x46u
 
@@ -246,22 +248,24 @@ int cheats_infinite_ammo(void)
 
 static void ammo_tick(void)
 {
-    static uint8_t weapon[ACTOR_COUNT], top[ACTOR_COUNT];
-    uint32_t i;
+    static uint8_t weapon[ACTOR_COUNT][3], top[ACTOR_COUNT][3];
+    uint32_t i, k;
     if (!s_ammo || !cheats_in_game()) {
         memset(top, 0, sizeof top);
         return;
     }
     for (i = 0; i < ACTOR_COUNT; i++) {
         uint32_t a = ACTORS + i * ACTOR_SIZE;
-        uint8_t w = M8(a + A_WEAPON), n = M8(a + A_AMMO);
         if (M8(a + A_CPU) != 0)
             continue;
-        if (w != weapon[i] || n > top[i]) {
-            weapon[i] = w;
-            top[i] = n;
-        } else if (n < top[i])
-            M8(a + A_AMMO) = top[i];
+        for (k = 0; k < 3; k++) {       /* three weapon slots */
+            uint8_t w = M8(a + A_WEAPON + k), n = M8(a + A_AMMO + k);
+            if (w != weapon[i][k] || n > top[i][k]) {
+                weapon[i][k] = w;
+                top[i][k] = n;
+            } else if (n < top[i][k])
+                M8(a + A_AMMO + k) = top[i][k];
+        }
     }
 }
 
