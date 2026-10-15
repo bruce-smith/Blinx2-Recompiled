@@ -31,6 +31,11 @@ Options:
   run time.
 - `--objects 0x...,0x...`: only the trees at these section offsets.
 
+Trees that are not in a stage table (characters, enemies, gimmicks) get
+their textures from the texture list the game's code names next to them.
+A character or enemy tree exports in bind pose: its nodes are its bones, so
+it can be posed and animated as a node hierarchy.
+
 Not yet exported: normals (the packed normals are skipped), vertex
 weights, and prop placement. For a stage as the game shows it, props
 included, see `xboxrecomp/tools/capture`.

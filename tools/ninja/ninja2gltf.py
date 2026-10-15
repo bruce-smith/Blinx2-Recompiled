@@ -393,6 +393,25 @@ def main():
             i = xbe.find(pat, i + 1)
     print(f"{len(areas)} areas with texture lists")
 
+    # Models the code sets up itself (characters, enemies, gimmicks): the code
+    # names the tree and its texture list as immediates close together.
+    code_tex = {}
+    for r in roots:
+        if any(m == r for _c, m, _n in areas):
+            continue
+        pat = struct.pack("<I", r)
+        i = xbe.find(pat)
+        while i >= 0 and r not in code_tex:
+            for d in range(-48, 49):
+                j = i + d
+                if d == 0 or j < 0 or j + 4 > len(xbe):
+                    continue
+                names = texlist_names(struct.unpack_from("<I", xbe, j)[0])
+                if names:
+                    code_tex[r] = names
+                    break
+            i = xbe.find(pat, i + 1)
+
     texidx = texture_index(args.assets) if args.assets else {}
     texcache = {}
 
@@ -476,7 +495,8 @@ def main():
 
     if args.objects:
         sel = [sec.va + int(x, 0) for x in args.objects.split(",")]
-        names_of = {m: n for _c, m, n in areas}
+        names_of = dict(code_tex)
+        names_of.update({m: n for _c, m, n in areas})
         for r in sel:
             emit(r, root["children"], names_of.get(r))
     else:
@@ -491,7 +511,7 @@ def main():
             props = group("other_trees", root["children"])
             for r in roots:
                 if r not in used:
-                    emit(r, props["children"], None)
+                    emit(r, props["children"], code_tex.get(r))
     g.write(args.out)
     print(f"wrote {args.out}: {len(g.j['meshes'])} meshes, {ntri} triangles, "
           f"{len(g.j.get('materials', []))} materials, {len(g.j.get('images', []))} textures")
