@@ -20,16 +20,17 @@ superproject).
 py -3 tools/ninja/ninja2gltf.py <game_files>/default.xbe M11 stage0101.glb --assets <assets>/extracted --collision
 ```
 
-Every stage at once (PowerShell), 26 sections, ~110 MB of .glb:
+Every stage at once: section `stages`, with a folder as the output. It
+writes `M11.glb` ... `M121.glb` and `G1.glb` ... `G5.glb` (26 files,
+~110 MB). The options go after the three positional arguments:
 
 ```
-foreach ($s in 'M11','M13','M14','M21','M23','M24','M31','M33','M34','M41','M43','M44',
-               'M51','M53','M54','M61','M64','M91','M93','M111','M121','G1','G2','G3','G4','G5') {
-  py -3 tools/ninja/ninja2gltf.py <game_files>/default.xbe $s out/$s.glb --assets <assets>/extracted --collision
-}
+py -3 tools/ninja/ninja2gltf.py <game_files>/default.xbe stages out --assets <assets>/extracted --collision --placements
 ```
 
-All 26 pass the Khronos glTF validator with no errors or warnings.
+All 26 pass the Khronos glTF validator with no errors or warnings. The
+tool writes standard glTF 2.0: UVs plus embedded PNG textures in the
+materials (alpha as MASK/BLEND), vertex normals, and named nodes.
 
 Options:
 
@@ -37,6 +38,13 @@ Options:
   it, materials keep only their colour.
 - `--collision`: the collision meshes as well, as `areaN_collision` nodes.
   Hide them, or use them as colliders.
+- `--placements`: the stage's objects (gimmicks, items, enemies' set
+  pieces) where the game places them. The data is the game's placement
+  lists: per object a type id, a position, a rotation and a parameter. Each
+  object becomes a marker node `objTT_param` (plus `extras.type` and
+  `extras.param`) under `placements` and `placements_2`. Markers carry no
+  mesh yet: which model each type draws is decided by the game's code
+  (see below).
 - `--all-trees`: every object tree in the section. Props and gimmicks (doors,
   crates, enemies) sit at their own origin, because the game places them at
   run time.
@@ -46,6 +54,14 @@ Options:
   that carries only a palette. Without `--colour` the `.tga`'s own palette
   is used.
 - `--objects 0x...,0x...`: only the trees at these section offsets.
+- `--skin` (with `--objects`): export each tree as one skinned mesh, rigged.
+  Characters are weighted chunk models. Every node is a bone. Nodes write
+  their vertices into a buffer shared by the whole tree, plain or weighted
+  (vertex type 44: position, packed normal, u16 weight /255, u16 index).
+  The strips index that buffer. The result is a glTF skin with all nodes
+  as joints and up to 4 weights per vertex, in bind pose. The player
+  characters are the 147-node trees in `MDLPL` (e.g. `--objects 0x21e44`),
+  the skeleton the `MOTPL` motions drive.
 - `--grid <spacing>`: lay the top-level groups out in a grid. Useful for
   part and prop libraries such as `MDLPL`, where everything sits at the
   origin.
@@ -53,14 +69,17 @@ Options:
 Trees that are not in a stage table (characters, enemies, gimmicks) get
 their textures from the texture list the game's code names next to them.
 A character or enemy tree exports in bind pose: its nodes are its bones, so
-it can be posed and animated as a node hierarchy.
+it can be posed and animated as a node hierarchy. For a rigged mesh that
+deforms with them, use `--skin`.
 
+Object angles are float radians in Blinx 2 (not Ninja's BAMS integers).
 Normals are exported (the packed 11:11:10 normals of vertex chunk 48).
-Not yet exported: vertex weights, and prop placement. The game's enemy spawn
-lists are in `.data` (per stage, a count and 0x5C-byte records: type,
-position, rotation, patrol target), but which model each type uses is
-decided in code. For a stage as the game shows it, props
-included, see `xboxrecomp/tools/capture`.
+Not yet exported: motions, and the model of each placed object. The object
+lists are in `.data`. Per stage index `(region - 1) * 5 + stage - 1` they
+are at 0x491C18 and 0x491DF8, 40-byte records. The enemy spawn lists are at
+0x4923C8: 0x5C-byte records with type, position, rotation and patrol
+target. Each type picks its model in its own code. For a stage exactly as
+the game shows it, props drawn, see `xboxrecomp/tools/capture`.
 
 Needs numpy and Pillow. The output is made from your own copy of the game:
 do not redistribute it.

@@ -6,8 +6,8 @@ Blinx 2 keeps its models in XBE sections: M<region><stage> per stage (M11 is
 stage 01-01), G1-G5, MDL* (characters, enemies, gimmicks). They hold Sega
 Ninja structures with absolute addresses inside the section:
 
-  NJS_OBJECT (52 bytes)  evalflags, model*, pos[3], ang[3] (BAMS, 65536 =
-                         360 degrees), scl[3], child*, sibling*
+  NJS_OBJECT (52 bytes)  evalflags, model*, pos[3], ang[3] (float radians
+                         in Blinx 2, not BAMS), scl[3], child*, sibling*
   NJS_CNK_MODEL          vlist*, plist*, center[3], radius
   vertex list            chunks: u8 type, u8 flags, u16 size; u16 index
                          offset, u16 count; then the vertices
@@ -113,9 +113,10 @@ def texture_png(src, palette=None):
     img.save(buf, "PNG")
     return buf.getvalue()
 
-# vertex chunk type -> bytes per vertex (Ninja NJD_CV_*)
+# vertex chunk type -> bytes per vertex (Ninja NJD_CV_*). Blinx 2's type 44
+# (weighted) is xyz, a packed normal, then a u16 weight (/255) and a u16 index.
 VERTEX_STRIDE = {32: 16, 33: 32, 34: 12, 35: 16, 36: 16, 37: 16, 38: 16, 39: 16,
-                 40: 16, 41: 24, 42: 28, 43: 28, 44: 28, 45: 28, 46: 28, 47: 28,
+                 40: 16, 41: 24, 42: 28, 43: 28, 44: 20, 45: 28, 46: 28, 47: 28,
                  48: 16, 49: 20, 50: 20}
 
 
@@ -163,11 +164,11 @@ def find_objects(sec):
         if not (sec.ok(ch) and sec.ok(sib)) or (mdl == 0 and ch == 0):
             continue
         pos = struct.unpack_from("<3f", d, o + 8)
-        ang = struct.unpack_from("<3i", d, o + 20)
+        ang = struct.unpack_from("<3f", d, o + 20)
         scl = struct.unpack_from("<3f", d, o + 32)
         if not all(0.001 < abs(s) < 1000 for s in scl):
             continue
-        if not all(abs(a) < 0x40000 for a in ang) or not all(abs(x) < 1e6 for x in pos):
+        if not all(a == 0 or 1e-6 < abs(a) < 100 for a in ang) or not all(abs(x) < 1e6 for x in pos):
             continue
         if mdl:
             vl, pl = sec.unpack("<II", mdl)
@@ -182,7 +183,7 @@ def find_objects(sec):
 def read_object(sec, p):
     ev, mdl = sec.unpack("<II", p)
     pos = sec.unpack("<3f", p + 8)
-    ang = sec.unpack("<3i", p + 20)
+    ang = sec.unpack("<3f", p + 20)
     scl = sec.unpack("<3f", p + 32)
     ch, sib = sec.unpack("<II", p + 44)
     return dict(addr=p, flags=ev, model=mdl, pos=pos, ang=ang, scl=scl, child=ch, sibling=sib)
@@ -214,13 +215,17 @@ def read_vertices(sec, vl):
         for i in range(count):
             v = q + i * stride
             xyz = sec.unpack("<3f", v)
-            if t in (48, 49, 50):                         # packed normal
+            if t in (44, 48, 49, 50):                     # packed normal
                 nrm = unpack_normal(sec.unpack("<I", v + 12)[0])
-            elif t in (33, 41, 42, 43, 44, 45, 46, 47):   # float normal
+            elif t in (33, 41, 42, 43, 45, 46, 47):       # float normal
                 nrm = sec.unpack("<3f", v + (16 if t == 33 else 12))
             else:
                 nrm = None
-            verts[ioff + i] = (xyz, nrm)
+            if t == 44:                                   # weighted: own index
+                _w, k = sec.unpack("<HH", v + 16)
+                verts[ioff + k] = (xyz, nrm)
+            else:
+                verts[ioff + i] = (xyz, nrm)
         p = q + count * stride
     return verts
 
@@ -306,9 +311,9 @@ def read_polys(sec, pl):
 
 
 def euler_quat(ang, zxy):
-    """Ninja BAMS angles -> quaternion (x, y, z, w); rotation X, then Y, then
+    """Angles in radians -> quaternion (x, y, z, w); rotation X, then Y, then
     Z (or Z, X, Y with NJD_EVAL_ZXY_ANG) applied to the vertex."""
-    rx, ry, rz = (a * 2 * math.pi / 65536.0 for a in ang)
+    rx, ry, rz = ang
 
     def q_axis(axis, a):
         s = math.sin(a / 2)
@@ -324,6 +329,130 @@ def euler_quat(ang, zxy):
     qx, qy, qz = q_axis((1, 0, 0), rx), q_axis((0, 1, 0), ry), q_axis((0, 0, 1), rz)
     q = mul(mul(qy, qx), qz) if zxy else mul(mul(qz, qy), qx)
     return (q / np.linalg.norm(q)).tolist()
+
+
+def node_matrix(o):
+    """4x4 local matrix of an NJS_OBJECT: T * R * S."""
+    x, y, z, w = euler_quat(o["ang"], o["flags"] & 0x20)
+    r = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                  [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                  [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+    m = np.eye(4)
+    m[:3, :3] = r * np.array(o["scl"])
+    m[:3, 3] = o["pos"]
+    return m
+
+
+def skinned_mesh(sec, root):
+    """A weighted chunk model (a character) in bind pose.
+
+    Nodes write their vertices, in their own space, into one vertex buffer
+    shared by the whole tree: plain chunks set whole vertices, weighted
+    chunks (type 44; flags & 3 = start, middle, end) add weight * position.
+    Strips index that buffer. Walked in draw order (node, children,
+    siblings). A strip set is drawn as soon as all its vertices are complete
+    (written, weights summing to 1): the body's strips hang off a node above
+    the bones that write and blend its vertices, and later nodes reuse
+    buffer slots for their own parts. Returns the nodes [(object, parent
+    index, world matrix)] and the triangles [(material state, [(pos, normal, u, v,
+    {joint: weight})] * 3)]."""
+    nodes, tris, deferred = [], [], []
+    buf = {}
+
+    def draw(st, tl):
+        out = []
+        for tri in tl:
+            if all(c[0] in buf for c in tri):
+                out.append([(buf[c[0]][0].copy(), buf[c[0]][1].copy(), c[1], c[2],
+                             dict(buf[c[0]][2])) for c in tri])
+        if out:
+            tris.append((st, out))
+
+    def walk(p, parent, pw, depth):
+        while p and depth < 256:
+            o = read_object(sec, p)
+            w = pw @ node_matrix(o)
+            me = len(nodes)
+            nodes.append((o, parent, w))
+            if o["model"]:
+                vl, pl = sec.unpack("<II", o["model"])
+                q = vl
+                while vl:
+                    t, fl, _sz, ioff, count = sec.unpack("<BBHHH", q)
+                    if t == 255 or t not in VERTEX_STRIDE:
+                        break
+                    stride = VERTEX_STRIDE[t]
+                    for i in range(count):
+                        v = q + 8 + i * stride
+                        xyz = np.append(sec.unpack("<3f", v), 1.0)
+                        nrm = unpack_normal(sec.unpack("<I", v + 12)[0]) if t in (44, 48, 49, 50) else (0.0, 1.0, 0.0)
+                        pos, n = (w @ xyz)[:3], w[:3, :3] @ np.array(nrm)
+                        if t == 44:
+                            wt, k = sec.unpack("<HH", v + 16)
+                            wt /= 255.0
+                            k += ioff
+                            if fl & 3 == 0 or k not in buf:
+                                buf[k] = [wt * pos, wt * n, {me: wt}]
+                            else:
+                                e = buf[k]
+                                e[0] = e[0] + wt * pos
+                                e[1] = e[1] + wt * n
+                                e[2][me] = e[2].get(me, 0.0) + wt
+                        else:
+                            buf[ioff + i] = [pos, n, {me: 1.0}]
+                    q += 8 + count * stride
+                if pl:
+                    deferred.extend(read_polys(sec, pl))
+                for st, tl in list(deferred):
+                    if all(c[0] in buf and sum(buf[c[0]][2].values()) > 0.99
+                           for tri in tl for c in tri):
+                        draw(st, tl)
+                        deferred.remove((st, tl))
+            if o["child"]:
+                walk(o["child"], me, w, depth + 1)
+            p = o["sibling"]
+
+    walk(root, -1, np.eye(4), 0)
+    for st, tl in deferred:                      # never complete: best effort
+        draw(st, tl)
+    return nodes, tris
+
+
+# The stages' object placement lists (Blinx 2 NA retail .data). Per stage
+# index (region - 1) * 5 + (stage - 1), a pointer to {count, records*}; a
+# record starts u32 type, pos[3], scale, rot[3] (radians), param. 0x491C18
+# is the main list (0x491D08 is a near-identical variant the game picks in
+# some modes); 0x491DF8 is a second list the game also spawns; 0x4923C8 are
+# the enemies (0x5C-byte records; then a patrol target).
+PLACEMENT_TABLES = (("placements", 0x491C18, 40), ("placements_2", 0x491DF8, 40),
+                    ("enemies", 0x4923C8, 0x5C))
+
+
+def stage_placements(xbe, section):
+    """section M<r><s> -> [(group, [(type, pos, scale, rot, param)])]."""
+    import re
+    m = re.fullmatch(r"M(\d+)(\d)", section)
+    if not m:
+        return []
+    index = (int(m.group(1)) - 1) * 5 + int(m.group(2)) - 1
+    va0, raw, size = xbe_sections(xbe)[".data"]
+
+    def u(va, fmt):
+        return struct.unpack_from(fmt, xbe, raw + va - va0)
+    out = []
+    for name, table, rsize in PLACEMENT_TABLES:
+        h, = u(table + 4 * index, "<I")
+        if not va0 <= h < va0 + size - 8:
+            continue
+        count, rec = u(h, "<II")
+        if not (0 < count < 4096 and va0 <= rec and rec + rsize * count <= va0 + size):
+            continue
+        objs = []
+        for k in range(count):
+            t, x, y, z, sc, rx, ry, rz, prm = u(rec + rsize * k, "<I8f")
+            objs.append((t, (x, y, z), sc, (rx, ry, rz), prm))
+        out.append((name, objs))
+    return out
 
 
 class Glb:
@@ -348,7 +477,7 @@ class Glb:
 
     def accessor(self, arr, kind, target):
         arr = np.ascontiguousarray(arr)
-        comp = 5126 if arr.dtype == np.float32 else 5125
+        comp = {np.dtype(np.float32): 5126, np.dtype(np.uint16): 5123}.get(arr.dtype, 5125)
         a = {"bufferView": self.view(arr.tobytes(), target), "componentType": comp,
              "count": int(arr.shape[0]), "type": kind}
         if kind == "VEC3" and comp == 5126:
@@ -376,7 +505,7 @@ class Glb:
             f.write(struct.pack("<II", len(bn), 0x004E4942) + bn)
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("xbe")
     ap.add_argument("section")
@@ -390,11 +519,29 @@ def main():
     ap.add_argument("--grid", type=float, metavar="SPACING",
                     help="lay the top-level groups out in a grid, SPACING units apart "
                          "(for libraries of parts or props that all sit at the origin)")
+    ap.add_argument("--placements", action="store_true",
+                    help="the stage's object placements (type, position, rotation) "
+                         "as marker nodes, from the game's placement lists")
+    ap.add_argument("--skin", action="store_true",
+                    help="export the --objects trees as skinned meshes (characters: "
+                         "the tree is the skeleton, weighted chunks give the weights)")
     ap.add_argument("--colour", type=int, metavar="N",
                     help="colour variant N (1-19) for palettised (@) textures")
     ap.add_argument("--assets", help="blipks-extracted archives (assets/extracted), "
                     "for textures by name")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+    if args.section.lower() == "stages":
+        # Every stage section (M<region><stage>, G<n>) into the folder `out`.
+        import re
+        rest = (argv if argv is not None else sys.argv[1:])[3:]
+        os.makedirs(args.out, exist_ok=True)
+        names = [k for k in xbe_sections(open(args.xbe, "rb").read())
+                 if re.fullmatch(r"M\d+|G\d+", k)]
+        names.sort(key=lambda k: (k[0] != "M", int(k[1:-1] or 0) if k[0] == "M" else 0, int(k[-1]) if k[0] == "M" else int(k[1:])))
+        for k in names:
+            print(f"== {k}")
+            main([args.xbe, k, os.path.join(args.out, k + ".glb")] + rest)
+        return
 
     xbe = open(args.xbe, "rb").read()
     sec = Section(xbe, args.section)
@@ -476,6 +623,70 @@ def main():
     ntri = 0
     bad = []
 
+    def material(st, names, solid=False):
+        tname = names[st["tex"]] if names and st["tex"] is not None and st["tex"] < len(names) else None
+        mkey = (tname, st["diffuse"], st["blend"], solid)
+        if mkey not in matcache:
+            mat = {"name": tname or ("collision" if solid else "untextured"),
+                   "pbrMetallicRoughness": {"baseColorFactor": list(st["diffuse"]),
+                                            "metallicFactor": 0.0,
+                                            "roughnessFactor": 1.0},
+                   "doubleSided": True}
+            if tname and not solid:
+                ti = tex_index(tname)
+                if ti is not None:
+                    mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": ti}
+                    mat["alphaMode"] = "MASK"
+                    mat["alphaCutoff"] = 0.5
+            if st["diffuse"][3] < 1.0:
+                mat["alphaMode"] = "BLEND"
+                mat.pop("alphaCutoff", None)
+            g.j["materials"].append(mat)
+            matcache[mkey] = len(g.j["materials"]) - 1
+        return matcache[mkey]
+
+    def emit_skinned(r, names):
+        """One skinned mesh; the tree's nodes are its joints."""
+        nonlocal ntri
+        nodes, tris = skinned_mesh(sec, r)
+        flip = np.diag([1.0, 1.0, -1.0, 1.0])     # the root node's scale
+        first = len(g.j["nodes"])
+        for k, (o, parent, _w) in enumerate(nodes):
+            g.j["nodes"].append({"name": "bone%03d_%08X" % (k, o["addr"]),
+                                 "translation": list(o["pos"]),
+                                 "rotation": euler_quat(o["ang"], o["flags"] & 0x20),
+                                 "scale": list(o["scl"])})
+            kids = root["children"] if parent < 0 else                 g.j["nodes"][first + parent].setdefault("children", [])
+            kids.append(first + k)
+        ibm = np.array([np.linalg.inv(flip @ w).T for _o, _p, w in nodes], np.float32)
+        skin = {"joints": list(range(first, first + len(nodes))), "skeleton": first,
+                "inverseBindMatrices": g.accessor(ibm.reshape(-1, 16), "MAT4", None)}
+        g.j.setdefault("skins", []).append(skin)
+        prims = []
+        for st, tl in tris:
+            pos, nrm, uv, jo, we = [], [], [], [], []
+            for tri in tl:
+                for xyz, n, u, v, wts in tri:
+                    pos.append((flip[:3, :3] @ xyz))
+                    n = flip[:3, :3] @ n
+                    nrm.append(n / (np.linalg.norm(n) or 1.0))
+                    uv.append((u, v))
+                    top = sorted(wts.items(), key=lambda kv: -kv[1])[:4]
+                    tot = sum(x for _j, x in top) or 1.0
+                    jo.append([j for j, _x in top] + [0] * (4 - len(top)))
+                    we.append([x / tot for _j, x in top] + [0.0] * (4 - len(top)))
+            attrs = {"POSITION": g.accessor(np.array(pos, np.float32), "VEC3", 34962),
+                     "NORMAL": g.accessor(np.array(nrm, np.float32), "VEC3", 34962),
+                     "TEXCOORD_0": g.accessor(np.array(uv, np.float32), "VEC2", 34962),
+                     "JOINTS_0": g.accessor(np.array(jo, np.uint16), "VEC4", 34962),
+                     "WEIGHTS_0": g.accessor(np.array(we, np.float32), "VEC4", 34962)}
+            prims.append({"attributes": attrs, "material": material(st, names)})
+            ntri += len(tl)
+        g.j["meshes"].append({"name": "skin_%08X" % r, "primitives": prims})
+        g.j["nodes"].append({"name": "mesh_%08X" % r, "mesh": len(g.j["meshes"]) - 1,
+                             "skin": len(g.j["skins"]) - 1})
+        g.j["scenes"][0]["nodes"].append(len(g.j["nodes"]) - 1)
+
     def emit(p, parent_children, names, depth=0, solid=False):
         nonlocal ntri
         while p and p in by and depth < 64:
@@ -507,32 +718,13 @@ def main():
                             uvs.append((v[1], v[2]))
                     if not idx:
                         continue
-                    tname = names[st["tex"]] if names and st["tex"] is not None and st["tex"] < len(names) else None
-                    mkey = (tname, st["diffuse"], st["blend"], solid)
-                    if mkey not in matcache:
-                        mat = {"name": tname or ("collision" if solid else "untextured"),
-                               "pbrMetallicRoughness": {"baseColorFactor": list(st["diffuse"]),
-                                                        "metallicFactor": 0.0,
-                                                        "roughnessFactor": 1.0},
-                               "doubleSided": True}
-                        if tname and not solid:
-                            ti = tex_index(tname)
-                            if ti is not None:
-                                mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": ti}
-                                mat["alphaMode"] = "MASK"
-                                mat["alphaCutoff"] = 0.5
-                        if st["diffuse"][3] < 1.0:
-                            mat["alphaMode"] = "BLEND"
-                            mat.pop("alphaCutoff", None)
-                        g.j["materials"].append(mat)
-                        matcache[mkey] = len(g.j["materials"]) - 1
                     attrs = {"POSITION": g.accessor(np.array(pts, np.float32), "VEC3", 34962),
                              "TEXCOORD_0": g.accessor(np.array(uvs, np.float32), "VEC2", 34962)}
                     if all(nm is not None for nm in nrms):
                         attrs["NORMAL"] = g.accessor(np.array(nrms, np.float32), "VEC3", 34962)
                     prims.append({"attributes": attrs,
                         "indices": g.accessor(np.array(idx, np.uint32), "SCALAR", 34963),
-                        "material": matcache[mkey]})
+                        "material": material(st, names, solid)})
                     ntri += len(idx) // 3
                 if prims:
                     g.j["meshes"].append({"name": "mdl_%08X" % o["model"], "primitives": prims})
@@ -557,7 +749,10 @@ def main():
         names_of = dict(code_tex)
         names_of.update({m: n for _c, m, n in areas})
         for r in sel:
-            emit(r, root["children"], names_of.get(r))
+            if args.skin:
+                emit_skinned(r, names_of.get(r))
+            else:
+                emit(r, root["children"], names_of.get(r))
     else:
         for k, (coll, model, names) in enumerate(areas):
             grp = group("area%d" % k, root["children"])
@@ -571,6 +766,24 @@ def main():
             for r in roots:
                 if r not in used:
                     emit(r, props["children"], code_tex.get(r))
+    if args.placements:
+        # The lists are in the game's world frame: the models' frame turned
+        # 180 degrees about x (y down). In the exported frame (z flipped) that
+        # is y negated: markers go at the scene root at (x, -y, z), their
+        # rotations mirrored in y. Checked on stage 01-01: half the markers
+        # are within 10 units of the stage's vertices (median 10).
+        for gname, objs in stage_placements(xbe, args.section):
+            grp = {"name": gname, "children": []}
+            g.j["nodes"].append(grp)
+            g.j["scenes"][0]["nodes"].append(len(g.j["nodes"]) - 1)
+            for t, pos, sc, rot, prm in objs:
+                g.j["nodes"].append({"name": "obj%02X_%g" % (t, prm),
+                                     "translation": [pos[0], -pos[1], pos[2]],
+                                     "rotation": euler_quat((-rot[0], rot[1], -rot[2]), False),
+                                     "scale": [sc or 1.0] * 3,
+                                     "extras": {"type": t, "param": prm}})
+                grp["children"].append(len(g.j["nodes"]) - 1)
+            print(f"{gname}: {len(objs)} objects")
     if args.grid:
         kids = root["children"]
         side = max(1, int(math.ceil(math.sqrt(len(kids)))))
