@@ -62,6 +62,22 @@ Options:
   as joints and up to 4 weights per vertex, in bind pose. The player
   characters are the 147-node trees in `MDLPL` (e.g. `--objects 0x21e44`),
   the skeleton the `MOTPL` motions drive.
+- `--edt <preset>` (with `--skin`): dress the character the way the
+  game's character editor does. A preset is
+  `edit_char/mdl_param_list_tsNNN.edt` (Time Sweeper, the cat, tree
+  `0x21e44`) or `..._tgNNN.edt` (Tom-Tom, the pig, tree `0x5b7dc`). Each
+  part (face, eyes, jacket, gloves, legs, boots, goggles, metal, emblem,
+  armband; Tom-Tom also cap, pants, band, tattoos) has a design and a
+  colour. The design picks the texture from the game's own name tables;
+  the colour picks the `_Pnn` palette.
+
+  ```
+  py -3 tools/ninja/ninja2gltf.py <game_files>/default.xbe MDLPL ts004.glb --objects 0x21e44 --skin --edt <assets>/extracted/<lng>/edit_char/mdl_param_list_ts004.edt --assets <assets>/extracted
+  ```
+
+  All 45 presets export with no validator errors or warnings. Not applied
+  yet: the body-shape sliders (preset bytes 24-41), and Tom-Tom colours
+  above 19, which keep the texture's own palette.
 - `--grid <spacing>`: lay the top-level groups out in a grid. Useful for
   part and prop libraries such as `MDLPL`, where everything sits at the
   origin.

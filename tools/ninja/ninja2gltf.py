@@ -455,6 +455,49 @@ def stage_placements(xbe, section):
     return out
 
 
+# The character editor (Blinx 2 NA retail). A preset (edit_char# mdl_param_list_t{s,g}NNN.edt, 108 bytes) is copied into the character's
+# data (sub_001F3E60): bytes 0-10 -> +0x3C..0x46, 11-19 -> +0x48..0x50,
+# 23 -> +0x51, 20/21 -> +0x52/0x53, 24-37 -> +0x55..0x62, 38 -> +0x54,
+# 39-41 -> +0x63..0x65 (the sliders). sub_00172880 then writes the chosen
+# texture names into the model's texture list: per part, the design byte
+# indexes a table of 32-byte names, the next byte is the colour (palette
+# _Pnn, 0 = the texture's own). (part, data offset, name table, slot).
+EDT_TO_DATA = dict([(k, 0x3C + k) for k in range(11)] + [(11 + k, 0x48 + k) for k in range(9)]
+                   + [(23, 0x51), (20, 0x52), (21, 0x53), (38, 0x54)]
+                   + [(24 + k, 0x55 + k) for k in range(14)] + [(39 + k, 0x63 + k) for k in range(3)])
+EDITOR_PARTS = {
+    "sweeper": [("kao", 0x3C, 0x44B598, 6), ("eye", 0x3E, 0x44B910, 2), ("jacket", 0x40, 0x44BA90, 5),
+                ("glove", 0x43, 0x44C030, 4), ("leg", 0x45, 0x44C2D0, 7), ("boot", 0x48, 0x44C610, 1),
+                ("emblem", 0x4A, 0x44C8B0, 0), ("glass", 0x4C, 0x44CB70, 3), ("metal", 0x4E, 0x44CE10, 8),
+                ("armband", 0x51, 0x44D110, 9)],
+    "tomtom": [("skin", 0x3C, 0x44D1F0, 8), ("hige", 0x3E, 0x44D4F0, 5), ("jacket", 0x40, 0x44D5B0, 6),
+               ("glove", 0x43, 0x44DB90, 4), ("pants", 0x45, 0x44DE30, 7), ("boot", 0x48, 0x44E270, 1),
+               ("emblem", 0x4A, 0x44EC50, 0), ("glass", 0x4C, 0x44E550, 3), ("cap", 0x4E, 0x44E870, 2),
+               ("band", 0x51, 0x44EB70, 10), ("tatoo", 0x52, 0x44EDB0, 12), ("tatoo2", 0x53, 0x44EDB0, 13)],
+}
+COLOURED = {"kao", "eye", "jacket", "glove", "leg", "boot", "emblem", "glass", "metal",
+            "skin", "hige", "pants", "cap"}
+
+
+def editor_textures(xbe, edt, names):
+    """A preset applied to a character's texture list -> (names, {name:
+    colour}, sliders). The team follows the list (Tom-Tom names are tom_)."""
+    va0, raw, size = xbe_sections(xbe)[".data"]
+    data = {EDT_TO_DATA[k]: edt[k] for k in EDT_TO_DATA}
+    team = "tomtom" if any("tom_" in n for n in names) else "sweeper"
+    names, colours = list(names), {}
+    for part, off, table, slot in EDITOR_PARTS[team]:
+        q = raw + table + 32 * data.get(off, 0) - va0
+        nm = xbe[q:q + 32].split(b"\0")[0].decode("latin1")
+        if not nm or slot >= len(names):
+            continue
+        names[slot] = nm
+        if part in COLOURED and data.get(off + 1):
+            colours[nm.lower()] = data[off + 1]
+    sliders = [struct.unpack("b", bytes([edt[k]]))[0] for k in list(range(24, 42))]
+    return names, colours, sliders
+
+
 class Glb:
     def __init__(self):
         self.bin = bytearray()
@@ -525,6 +568,9 @@ def main(argv=None):
     ap.add_argument("--skin", action="store_true",
                     help="export the --objects trees as skinned meshes (characters: "
                          "the tree is the skeleton, weighted chunks give the weights)")
+    ap.add_argument("--edt", metavar="FILE",
+                    help="with --skin: dress the character from an editor preset "
+                         "(edit_char/mdl_param_list_t{s,g}NNN.edt): designs and colours")
     ap.add_argument("--colour", type=int, metavar="N",
                     help="colour variant N (1-19) for palettised (@) textures")
     ap.add_argument("--assets", help="blipks-extracted archives (assets/extracted), "
@@ -605,12 +651,15 @@ def main(argv=None):
     texidx = texture_index(args.assets) if args.assets else {}
     texcache = {}
 
+    part_colours = {}
+
     def tex_index(name):
         key = name.lower()
         if key.endswith("_xx") and key not in texidx:   # per-language name
             key = key[:-3] + "_us"
         if key not in texcache:
-            pal = palette_source(texidx, key, args.colour) if args.colour else None
+            col = part_colours.get(key, args.colour)
+            pal = palette_source(texidx, key, col) if col else None
             png = texture_png(texidx[key], pal) if key in texidx else None
             texcache[key] = g.image(png) if png else None
         return texcache[key]
@@ -671,7 +720,8 @@ def main(argv=None):
                     n = flip[:3, :3] @ n
                     nrm.append(n / (np.linalg.norm(n) or 1.0))
                     uv.append((u, v))
-                    top = sorted(wts.items(), key=lambda kv: -kv[1])[:4]
+                    top = sorted(((j, x) for j, x in wts.items() if x > 0),
+                                 key=lambda kv: -kv[1])[:4] or [(0, 1.0)]
                     tot = sum(x for _j, x in top) or 1.0
                     jo.append([j for j, _x in top] + [0] * (4 - len(top)))
                     we.append([x / tot for _j, x in top] + [0.0] * (4 - len(top)))
@@ -746,11 +796,18 @@ def main(argv=None):
 
     if args.objects:
         sel = [sec.va + int(x, 0) for x in args.objects.split(",")]
+        part_colours.clear()
         names_of = dict(code_tex)
         names_of.update({m: n for _c, m, n in areas})
         for r in sel:
             if args.skin:
-                emit_skinned(r, names_of.get(r))
+                names = names_of.get(r)
+                if args.edt and names:
+                    names, cols, sliders = editor_textures(xbe, open(args.edt, "rb").read(), names)
+                    part_colours.update(cols)
+                    print("preset textures:", ", ".join(
+                        n + ("/P%02d" % cols[n.lower()] if n.lower() in cols else "") for n in names))
+                emit_skinned(r, names)
             else:
                 emit(r, root["children"], names_of.get(r))
     else:
