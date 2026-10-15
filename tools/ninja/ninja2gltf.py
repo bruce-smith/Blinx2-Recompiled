@@ -275,9 +275,9 @@ def read_polys(sec, pl):
                     tris.append((a, b, c))
             out.append((dict(state), tris))
             # The size field is too small for long strips (a 44-vertex strip
-            # says 196 bytes and takes 268); the strips themselves, padded to
-            # 4 bytes, say where the next chunk is.
-            p = body + ((q - body + 3) & ~3)
+            # says 196 bytes and takes 268), so the strips themselves say where
+            # the next chunk is. Padding after them is null chunks.
+            p = q
             continue
         p = body + size * 2                            # volume / unknown: skip
     return out
@@ -447,6 +447,7 @@ def main():
     g.j["nodes"].append(root)
     g.j["scenes"][0]["nodes"].append(0)
     ntri = 0
+    bad = []
 
     def emit(p, parent_children, names, depth=0, solid=False):
         nonlocal ntri
@@ -457,9 +458,16 @@ def main():
                     "scale": list(o["scl"])}
             if o["model"]:
                 vl, pl = sec.unpack("<II", o["model"])
-                verts = read_vertices(sec, vl) if vl else {}
+                try:
+                    verts = read_vertices(sec, vl) if vl else {}
+                    polys = read_polys(sec, pl) if pl else []
+                except (struct.error, IndexError):
+                    # The walk ran off the section: a chunk this reader does not
+                    # know, or not a model after all. Skip it.
+                    bad.append(o["model"])
+                    verts, polys = {}, []
                 prims = []
-                for st, tris in (read_polys(sec, pl) if pl else []):
+                for st, tris in polys:
                     pts, nrms, uvs, idx = [], [], [], []
                     for tri in tris:
                         if not all(v[0] in verts for v in tri):
@@ -543,6 +551,9 @@ def main():
             nd = g.j["nodes"][ni]
             t = nd.get("translation", [0.0, 0.0, 0.0])
             nd["translation"] = [t[0] + (k % side) * args.grid, t[1], t[2] + (k // side) * args.grid]
+    if bad:
+        print(f"skipped {len(bad)} models that could not be read: "
+              + ", ".join("0x%X" % (m - sec.va) for m in bad[:10]))
     g.write(args.out)
     print(f"wrote {args.out}: {len(g.j['meshes'])} meshes, {ntri} triangles, "
           f"{len(g.j.get('materials', []))} materials, {len(g.j.get('images', []))} textures")

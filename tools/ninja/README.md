@@ -20,6 +20,17 @@ superproject).
 py -3 tools/ninja/ninja2gltf.py <game_files>/default.xbe M11 stage0101.glb --assets <assets>/extracted --collision
 ```
 
+Every stage at once (PowerShell), 26 sections, ~110 MB of .glb:
+
+```
+foreach ($s in 'M11','M13','M14','M21','M23','M24','M31','M33','M34','M41','M43','M44',
+               'M51','M53','M54','M61','M64','M91','M93','M111','M121','G1','G2','G3','G4','G5') {
+  py -3 tools/ninja/ninja2gltf.py <game_files>/default.xbe $s out/$s.glb --assets <assets>/extracted --collision
+}
+```
+
+All 26 pass the Khronos glTF validator with no errors or warnings.
+
 Options:
 
 - `--assets <dir>`: textures by name from the extracted archives. Without
@@ -40,7 +51,10 @@ A character or enemy tree exports in bind pose: its nodes are its bones, so
 it can be posed and animated as a node hierarchy.
 
 Normals are exported (the packed 11:11:10 normals of vertex chunk 48).
-Not yet exported: vertex weights, and prop placement. For a stage as the game shows it, props
+Not yet exported: vertex weights, and prop placement. The game's enemy spawn
+lists are in `.data` (per stage, a count and 0x5C-byte records: type,
+position, rotation, patrol target), but which model each type uses is
+decided in code. For a stage as the game shows it, props
 included, see `xboxrecomp/tools/capture`.
 
 Needs numpy and Pillow. The output is made from your own copy of the game:
