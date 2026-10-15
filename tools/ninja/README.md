@@ -40,6 +40,11 @@ Options:
 - `--all-trees`: every object tree in the section. Props and gimmicks (doors,
   crates, enemies) sit at their own origin, because the game places them at
   run time.
+- `--colour N`: colour variant N (1-19) of the palettised textures. The
+  custom-character parts use colour-mapped `.tga` textures (names starting
+  with `@`). Each colour the editor offers is an `@name_pNN.icb`, an 8x8 TGA
+  that carries only a palette. Without `--colour` the `.tga`'s own palette
+  is used.
 - `--objects 0x...,0x...`: only the trees at these section offsets.
 - `--grid <spacing>`: lay the top-level groups out in a grid. Useful for
   part and prop libraries such as `MDLPL`, where everything sits at the

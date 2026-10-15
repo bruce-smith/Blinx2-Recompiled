@@ -46,6 +46,10 @@ def texture_index(assets):
             fl = f.lower()
             if fl.endswith(".dds"):
                 index.setdefault(fl[:-4], ("dds", p, 0))
+            elif fl.endswith(".tga"):                 # palettised (@ names)
+                index.setdefault(fl[:-4], ("tga", p, 0))
+            elif fl.endswith(".icb"):                 # its colour variants
+                index.setdefault("palette:" + fl[:-4], ("icb", p, 0))
             elif fl.endswith(".mix"):
                 with open(p, "rb") as fh:
                     head = fh.read(0x800)
@@ -66,11 +70,29 @@ def dds_header(w, h, fourcc, size):
     return hdr
 
 
-def texture_png(src):
-    """A .dds or an XPR0 texture inside a .mix (DXT1/3/5) -> PNG bytes."""
+def palette_source(index, name, colour):
+    """The colour variant of a palettised texture: @name00.tga takes its
+    palette from @name_pNN.icb (NN = colour, 1-based), if there is one."""
+    base = name.lower().rstrip("0123456789")
+    return index.get("palette:%s_p%02d" % (base, colour))
+
+
+def texture_png(src, palette=None):
+    """A .dds, a palettised .tga or an XPR0 texture inside a .mix (DXT1/3/5)
+    -> PNG bytes. palette: an .icb source whose palette replaces the .tga's."""
     from PIL import Image
     kind, path, i = src
     data = open(path, "rb").read()
+    if kind == "tga":
+        # Colour-mapped TGA: 8-bit indices and a 256-entry palette (the NV2A
+        # P8 textures of the custom characters). An .icb is an 8x8 TGA whose
+        # palette is one of the editor's colour choices.
+        img = Image.open(io.BytesIO(data))
+        if palette:
+            img.putpalette(Image.open(palette[1]).getpalette())
+        buf = io.BytesIO()
+        img.convert("RGBA").save(buf, "PNG")
+        return buf.getvalue()
     if kind == "mix":
         x = 0x800
         _m, _total, hsize = struct.unpack_from("<3I", data, x)
@@ -368,6 +390,8 @@ def main():
     ap.add_argument("--grid", type=float, metavar="SPACING",
                     help="lay the top-level groups out in a grid, SPACING units apart "
                          "(for libraries of parts or props that all sit at the origin)")
+    ap.add_argument("--colour", type=int, metavar="N",
+                    help="colour variant N (1-19) for palettised (@) textures")
     ap.add_argument("--assets", help="blipks-extracted archives (assets/extracted), "
                     "for textures by name")
     args = ap.parse_args()
@@ -436,8 +460,11 @@ def main():
 
     def tex_index(name):
         key = name.lower()
+        if key.endswith("_xx") and key not in texidx:   # per-language name
+            key = key[:-3] + "_us"
         if key not in texcache:
-            png = texture_png(texidx[key]) if key in texidx else None
+            pal = palette_source(texidx, key, args.colour) if args.colour else None
+            png = texture_png(texidx[key], pal) if key in texidx else None
             texcache[key] = g.image(png) if png else None
         return texcache[key]
 
