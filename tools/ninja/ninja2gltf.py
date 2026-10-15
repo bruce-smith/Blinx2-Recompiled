@@ -349,6 +349,9 @@ def main():
                     help="every object tree in the section (props sit at their origin)")
     ap.add_argument("--collision", action="store_true",
                     help="also the collision trees, as a separate hidden-by-name node")
+    ap.add_argument("--grid", type=float, metavar="SPACING",
+                    help="lay the top-level groups out in a grid, SPACING units apart "
+                         "(for libraries of parts or props that all sit at the origin)")
     ap.add_argument("--assets", help="blipks-extracted archives (assets/extracted), "
                     "for textures by name")
     args = ap.parse_args()
@@ -467,6 +470,7 @@ def main():
                                 mat["alphaCutoff"] = 0.5
                         if st["diffuse"][3] < 1.0:
                             mat["alphaMode"] = "BLEND"
+                            mat.pop("alphaCutoff", None)
                         g.j["materials"].append(mat)
                         matcache[mkey] = len(g.j["materials"]) - 1
                     prims.append({"attributes": {
@@ -512,6 +516,13 @@ def main():
             for r in roots:
                 if r not in used:
                     emit(r, props["children"], code_tex.get(r))
+    if args.grid:
+        kids = root["children"]
+        side = max(1, int(math.ceil(math.sqrt(len(kids)))))
+        for k, ni in enumerate(kids):
+            nd = g.j["nodes"][ni]
+            t = nd.get("translation", [0.0, 0.0, 0.0])
+            nd["translation"] = [t[0] + (k % side) * args.grid, t[1], t[2] + (k // side) * args.grid]
     g.write(args.out)
     print(f"wrote {args.out}: {len(g.j['meshes'])} meshes, {ntri} triangles, "
           f"{len(g.j.get('materials', []))} materials, {len(g.j.get('images', []))} textures")

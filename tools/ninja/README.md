@@ -30,6 +30,9 @@ Options:
   crates, enemies) sit at their own origin, because the game places them at
   run time.
 - `--objects 0x...,0x...`: only the trees at these section offsets.
+- `--grid <spacing>`: lay the top-level groups out in a grid. Useful for
+  part and prop libraries such as `MDLPL`, where everything sits at the
+  origin.
 
 Trees that are not in a stage table (characters, enemies, gimmicks) get
 their textures from the texture list the game's code names next to them.
