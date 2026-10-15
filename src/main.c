@@ -57,6 +57,7 @@
 #include <xbox/xboxrecomp.h>
 #include "ohci.h"          /* xbox_usb: USB host controller model */
 #include "xbox_ui.h"        /* settings file, in-game menu */
+#include "netplay.h"        /* lockstep network play */
 #include "cheats.h"         /* the menu's Cheats tab */
 #include "build_sha.h"      /* for the menu's About text (cmake/git_sha.cmake) */
 #ifndef BLINX2_GIT_SHA
@@ -1398,6 +1399,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             if (!getenv(on[i]))
                 _putenv_s(on[i], "1");
     }
+
+    /* A network game (RECOMP_NET=host:<port> | join:<ip>:<port>): waits here
+     * for the session, then sets what every peer must run alike -- virtual
+     * mode, one pad per player, software rendering for what the guest reads
+     * back -- before anything reads those settings (xboxrecomp src/net). */
+    xbox_NetplayStart();
 
     /* Sound: the emulated APU (RECOMP_AC97_READY: trap its registers, run the
      * voice processor, play through XAudio2). On by default in the playable
