@@ -269,10 +269,8 @@ shown. Expect about one extra frame (~33 ms) of input delay.
 
 To turn it off, set Smooth Motion / Fluid Motion Frames back to off.
 Without Vulkan presentation (the default window) the drivers have nothing to
-work on, so nothing changes. Note: with the Vulkan renderer and Vulkan
-presentation, the Escape menu is not drawn over the picture yet (it still
-works, unseen); turn Vulkan presentation off to change settings until that
-is fixed.
+work on, so nothing changes. The Escape menu is drawn over the picture in
+every mode.
 
 ## Exporting stages and characters (glTF)
 
