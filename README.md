@@ -232,6 +232,47 @@ Environment variables, set before starting the exe:
 | `RECOMP_ASYNC_SYNC=0` | Software renderer: fully drain at sync points (slower; for troubleshooting). |
 | `RECOMP_HEADLESS=1` | No window, no dialogs (for scripted runs). |
 | `RECOMP_WATCHDOG_STALL=<s>` | Dump diagnostics and exit if no frame is presented for `<s>` seconds. |
+| `RECOMP_VK_PRESENT=1` | Show frames through a Vulkan swapchain instead of the plain window drawing (needed for frame generation and full-resolution anti-aliasing). Menu: Graphics > Present through Vulkan. |
+| `RECOMP_VK_SCALE=3` or `5` | Vulkan renderer: supersampling (anti-aliasing). Full resolution with `RECOMP_VK_PRESENT=1`. Menu: Graphics > Supersampling. |
+| `RECOMP_VK_AA=fxaa` | Vulkan presentation: FXAA edge smoothing. Menu: Graphics > Anti-aliasing. |
+| `RECOMP_VK_FPS_CAP=30` or `60` | Vulkan presentation: show at most that many frames a second. Menu: Graphics > Frame-rate cap. |
+| `RECOMP_FB_FULLSCREEN=1` | Start in borderless full screen. Menu: Graphics > Start in fullscreen. |
+
+### Frame generation
+
+The game runs at 30 frames a second, as on the Xbox. Your graphics driver
+can double the frames you see to 60 by generating one between each pair
+(NVIDIA Smooth Motion, AMD Fluid Motion Frames). No mod or game setting
+changes what the game itself does; the driver works on the frames it is
+shown. Expect about one extra frame (~33 ms) of input delay.
+
+1. In the game's menu (Escape) > Graphics, set:
+   - **Present through Vulkan**: on (takes effect at the next start);
+   - **Frame-rate cap (Vulkan presentation)**: 30, so the driver always
+     gets one steady rate (the title screens run at 60);
+   - **Start in fullscreen**: on, or press F11 once the game is running.
+
+   (The same as `RECOMP_VK_PRESENT=1`, `RECOMP_VK_FPS_CAP=30` and
+   `RECOMP_FB_FULLSCREEN=1`.)
+2. Turn the driver feature on for `blinx_2_recomp.exe`:
+   - **NVIDIA (GeForce RTX 40 series or newer, current driver):** open the
+     NVIDIA App > Graphics > Program settings > Add a program, pick
+     `build\Release\blinx_2_recomp.exe`, then under Driver settings set
+     **Smooth Motion** to On.
+   - **AMD (Radeon RX 6000 series or newer):** AMD Software: Adrenalin
+     Edition > Gaming > Graphics (or the game's own profile) > **AMD Fluid
+     Motion Frames** on.
+3. Start the game and play in full screen. To check that it works, open the
+   driver's performance overlay (NVIDIA: Alt+R; AMD: Ctrl+Shift+O): the
+   displayed frame rate should be about 60 while the game's own frame
+   counter (the window title) stays at 30.
+
+To turn it off, set Smooth Motion / Fluid Motion Frames back to off.
+Without Vulkan presentation (the default window) the drivers have nothing to
+work on, so nothing changes. Note: with the Vulkan renderer and Vulkan
+presentation, the Escape menu is not drawn over the picture yet (it still
+works, unseen); turn Vulkan presentation off to change settings until that
+is fixed.
 
 ## Linux and Steam Deck
 

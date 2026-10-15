@@ -1375,6 +1375,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         xbox_setting_bool("graphics", "vk_present", "Present through Vulkan",
                           0, "RECOMP_VK_PRESENT", XBOX_SETTING_RESTART);
         xbox_setting_to_env("graphics", "vk_present");
+        /* Borderless fullscreen from the start (F11 / Alt+Enter toggle it
+         * any time); with Vulkan presentation, what frame-generating drivers
+         * (NVIDIA Smooth Motion, AMD Fluid Motion Frames) work best with. */
+        xbox_setting_bool("graphics", "fullscreen", "Start in fullscreen",
+                          0, "RECOMP_FB_FULLSCREEN", XBOX_SETTING_RESTART);
+        xbox_setting_to_env("graphics", "fullscreen");
         snprintf(about, sizeof about,
                  "Blinx 2: Masters of Time and Space -- static recompilation.\n"
                  "blinx2-recomp %s, xboxrecomp %s.\n"
