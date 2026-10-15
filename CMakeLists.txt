@@ -42,6 +42,18 @@ endif()
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../xboxrecomp" CACHE PATH
     "Path to the xboxrecomp toolkit root directory")
 
+# POSIX: the executable must be position independent. Guest memory is mapped
+# at its Xbox addresses (0x00010000 up, plus the 128 MB contiguous window), and
+# a non-PIE x86-64 Linux executable loads at 0x00400000, in the middle of it.
+if(NOT WIN32)
+    # The Vulkan backend's glslang is C++: with CXX enabled here CMake links
+    # the executable with the C++ driver, which brings in libstdc++.
+    enable_language(CXX)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    include(CheckPIESupported)
+    check_pie_supported()
+endif()
+
 # Add xboxrecomp as a subdirectory -- this builds all 6 runtime libraries
 # and provides the 'xboxrecomp' umbrella target to link against.
 add_subdirectory(${XBOXRECOMP_DIR} ${CMAKE_BINARY_DIR}/xboxrecomp)
@@ -118,17 +130,25 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${XBOXRECOMP_DIR}/include
 )
 
-# Windows SDK libraries needed at link time
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    d3d11
-    dxgi
-    dxguid
-    xinput
-    winmm
-    # Lets the fault handler resolve the host RIP back to the generated
-    # function's symbol, i.e. to the guest function that faulted.
-    dbghelp
-)
+if(WIN32)
+    # Windows SDK libraries needed at link time
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        d3d11
+        dxgi
+        dxguid
+        xinput
+        winmm
+        # Lets the fault handler resolve the host RIP back to the generated
+        # function's symbol, i.e. to the guest function that faulted.
+        dbghelp
+    )
+else()
+    # Export every symbol, so the fault handler's dladdr names the generated
+    # sub_XXXXXXXX a host RIP is in (the POSIX stand-in for the PDB).
+    target_link_options(${PROJECT_NAME} PRIVATE -rdynamic)
+    # The generated C is 3 M lines of mechanical code: its warnings are noise.
+    set_source_files_properties(${RECOMP_GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 
 # MSVC-specific: large address aware, increase section limit for big generated files
 if(MSVC)

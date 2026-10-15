@@ -23,11 +23,19 @@
 #include <stdlib.h>         /* getenv */
 #include <string.h>         /* memcmp */
 #include <time.h>           /* clock */
+#if defined(_MSC_VER)
 #include <intrin.h>         /* _InterlockedIncrement */
 
 __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
 __declspec(dllimport) void __stdcall Sleep(unsigned long ms);
 __declspec(dllimport) unsigned long long __stdcall GetTickCount64(void);
+#define RECOMP_MANUAL_TLS __declspec(thread)
+#else
+/* POSIX: the same three from xboxrecomp's platform layer (win32_compat). */
+#include "platform/xbox_winnt.h"
+#define _InterlockedIncrement(p) __atomic_add_fetch((p), 1, __ATOMIC_SEQ_CST)
+#define RECOMP_MANUAL_TLS __thread
+#endif
 extern void xbox_SetVblankGate(int (*gate)(int due));
 /* A replay of a recorded guest-CPU schedule (xboxrecomp kernel/sched.c)
  * reproduces everything the v2 events below do, and their waits would hold
@@ -61,8 +69,8 @@ typedef void (*recomp_func_t)(void);
 
 /* Thread-local in the runtime (RECOMP_TLS), so declared the same way here: a
  * plain extern would compile and then read the wrong storage. */
-extern __declspec(thread) uint32_t g_eax;
-extern __declspec(thread) uint32_t g_esp;
+extern RECOMP_MANUAL_TLS uint32_t g_eax;
+extern RECOMP_MANUAL_TLS uint32_t g_esp;
 extern ptrdiff_t g_xbox_mem_offset;
 
 /* ── Manual function overrides ─────────────────────────────── */
@@ -169,7 +177,12 @@ static void timing_trace(uint32_t counter)
     if (counter > peak)
         peak = counter;
     last = counter;
+#if defined(_MSC_VER)
     now = (long)(clock() * 1000L / CLOCKS_PER_SEC);   /* wall time on MSVC */
+#else
+    /* POSIX clock() is CPU time summed over every thread, not wall time. */
+    now = (long)GetTickCount64();
+#endif
     if (!t0)
         t0 = now;
     if (now - t0 >= 1000) {

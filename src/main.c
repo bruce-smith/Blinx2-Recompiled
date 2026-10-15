@@ -31,11 +31,22 @@
  *   Kernel imports: ??
  */
 
+#if defined(_WIN32)
 #include <windows.h>
 #include <mmsystem.h>       /* timeBeginPeriod */
 #include <dbghelp.h>
-#include <stdio.h>
 #include <io.h>
+#else
+/* POSIX: the Win32 names below come from xboxrecomp's platform layer
+ * (win32_compat), reached through xboxrecomp.h. */
+#include <unistd.h>
+#include <glob.h>
+#include <time.h>
+#include <sys/stat.h>
+#define _snprintf snprintf
+#define _putenv_s(name, value) setenv((name), (value), 1)
+#endif
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -116,6 +127,23 @@ extern ptrdiff_t g_xbox_mem_offset;
 static char g_game_dir[MAX_PATH];
 static char g_xbe_path[MAX_PATH];
 
+#if !defined(_WIN32)
+static void resolve_game_dir(void)
+{
+    const char *env = getenv("RECOMP_GAME_DIR");
+    size_t n;
+
+    if (env && *env)
+        snprintf(g_game_dir, sizeof g_game_dir, "%s", env);
+    else if (access("game_files/default.xbe", R_OK) != 0
+             || !realpath("game_files", g_game_dir))
+        snprintf(g_game_dir, sizeof g_game_dir, "%s", BLINX2_GAME_DIR_DEFAULT);
+    n = strlen(g_game_dir);
+    while (n > 1 && g_game_dir[n - 1] == '/')
+        g_game_dir[--n] = 0;
+    snprintf(g_xbe_path, sizeof g_xbe_path, "%s/default.xbe", g_game_dir);
+}
+#else
 static void resolve_game_dir(void)
 {
     const char *env = getenv("RECOMP_GAME_DIR");
@@ -138,6 +166,7 @@ static void resolve_game_dir(void)
         g_game_dir[--n] = 0;
     snprintf(g_xbe_path, sizeof g_xbe_path, "%s\\default.xbe", g_game_dir);
 }
+#endif
 #define BLINX_2_XBE_PATH      g_xbe_path
 #define BLINX_2_DIR           g_game_dir
 
@@ -263,6 +292,7 @@ static DWORD WINAPI sampler_main(LPVOID param)
         memset(&ctx, 0, sizeof(ctx));
         ctx.ContextFlags = CONTEXT_FULL;
         if (GetThreadContext(s_sample_target, &ctx)) {
+#if defined(_WIN32)
             for (d = 0; d < 16 && ctx.Rip; d++) {
                 DWORD64 base = 0, fn;
                 PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(ctx.Rip, &base, NULL);
@@ -277,6 +307,26 @@ static DWORD WINAPI sampler_main(LPVOID param)
                     RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, rf,
                                      &ctx, &hd, &ef, NULL);
                 }
+#else
+            /* POSIX: no unwinder that can walk another thread's stack here,
+             * so the innermost frame only. It is keyed by its function
+             * (dladdr), looked up once the thread runs again: nothing that
+             * can take a lock runs while it is stopped. */
+            ResumeThread(s_sample_target);
+            for (d = 0; d < 1 && ctx.Rip; d++) {
+                DWORD64 fn = ctx.Rip;
+                unsigned long *c;
+                {
+                    char sb[sizeof(SYMBOL_INFO) + 64];
+                    SYMBOL_INFO *si = (SYMBOL_INFO *)sb;
+                    DWORD64 disp = 0;
+                    memset(sb, 0, sizeof sb);
+                    si->SizeOfStruct = sizeof(SYMBOL_INFO);
+                    si->MaxNameLen = 32;
+                    if (SymFromAddr(GetCurrentProcess(), fn, &disp, si))
+                        fn = si->Address;
+                }
+#endif
                 if (d == 0 && (c = sample_slot(fn, 1))) (*c)++;
                 for (k = 0; k < nseen && seen[k] != fn; k++) ;
                 if (k == nseen) {
@@ -286,6 +336,9 @@ static DWORD WINAPI sampler_main(LPVOID param)
             }
             total++;
         }
+#if !defined(_WIN32)
+        else            /* POSIX resumed it as soon as its context was read */
+#endif
         ResumeThread(s_sample_target);
         if (GetTickCount() - last >= 30000) {
             static int window = -1;
@@ -825,8 +878,13 @@ extern bool apu_hook_handle_mmio(PCONTEXT ctx, uintptr_t fault_addr,
  * handle -- no stdio, which could need its lock or more stack. */
 static void raw_stderr(const char *s)
 {
+#if defined(_WIN32)
     DWORD w;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), s, (DWORD)strlen(s), &w, NULL);
+#else
+    ssize_t r = write(2, s, strlen(s));
+    (void)r;
+#endif
 }
 
 static void exit_report_atexit(void)
@@ -948,6 +1006,25 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
             fprintf(stderr, "  host thread %lu, g_fs_base=0x%08X\n",
                     GetCurrentThreadId(), g_fs_base);
             fprintf(stderr, "  Native stack:\n");
+#if !defined(_WIN32)
+            /* POSIX: the handler runs on the faulting thread, so its own
+             * backtrace runs through the signal frame into the fault. */
+            {
+                PVOID fr[32];
+                int nf = CaptureStackBackTrace(0, 32, fr, NULL);
+                (void)ctx;
+                for (d = 0; d < nf; d++) {
+                    DWORD64 disp = 0;
+                    memset(sbuf, 0, sizeof(sbuf));
+                    sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+                    sym->MaxNameLen = 255;
+                    fprintf(stderr, "    [%2d] %p %s+0x%llX\n", d, fr[d],
+                            SymFromAddr(GetCurrentProcess(), (DWORD64)(uintptr_t)fr[d],
+                                        &disp, sym) ? sym->Name : "?",
+                            (unsigned long long)disp);
+                }
+            }
+#else
             for (d = 0; d < 24 && ctx.Rip; d++) {
                 DWORD64 base = 0, disp = 0;
                 PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(ctx.Rip, &base, NULL);
@@ -968,6 +1045,7 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
                                      &ctx, &hd, &ef, NULL);
                 }
             }
+#endif
         }
         fflush(stderr);
     }
@@ -1010,6 +1088,48 @@ static int cmp_str(const void *a, const void *b)
     return strcmp((const char *)a, (const char *)b);
 }
 
+#if !defined(_WIN32)
+/* POSIX: <name> -> <stem>.prev-<mtime of `stamp`, local time><ext>, then keep
+ * the newest `keep` matching <stem>.prev-*<ext>. */
+static void rotate_posix(const char *name, const char *stamp, const char *stem,
+                         const char *ext, int keep)
+{
+    char prev[MAX_PATH], pat[MAX_PATH];
+    struct stat st;
+    glob_t g;
+    size_t i;
+
+    if (stat(name, &st) == 0) {
+        struct tm tm;
+        struct stat ts;
+        time_t t = (stamp && stat(stamp, &ts) == 0) ? ts.st_mtime : st.st_mtime;
+        localtime_r(&t, &tm);
+        snprintf(prev, sizeof prev, "%s.prev-%04d%02d%02d-%02d%02d%02d%s", stem,
+                 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                 tm.tm_hour, tm.tm_min, tm.tm_sec, ext);
+        rename(name, prev);
+    }
+    snprintf(pat, sizeof pat, "%s.prev-*%s", stem, ext);
+    if (glob(pat, 0, NULL, &g) != 0)
+        return;
+    /* glob sorts, and the names are timestamped: oldest first. */
+    for (i = 0; i + (size_t)keep < g.gl_pathc; i++)
+        unlink(g.gl_pathv[i]);
+    globfree(&g);
+}
+
+static void rotate_log(const char *base, int keep)
+{
+    char cur[MAX_PATH];
+    snprintf(cur, sizeof cur, "%s.log", base);
+    rotate_posix(cur, NULL, base, ".log", keep);
+}
+
+static void rotate_rec(int keep)
+{
+    rotate_posix("blinx2_input.rec", "blinx2_recomp.log", "blinx2_input", ".rec", keep);
+}
+#else
 static void rotate_log(const char *base, int keep)
 {
     char cur[MAX_PATH], prev[MAX_PATH], pat[MAX_PATH];
@@ -1080,6 +1200,7 @@ static void rotate_rec(int keep)
     for (i = 0; i + keep < n; i++)
         DeleteFileA(names[i]);
 }
+#endif
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                    LPSTR lpCmdLine, int nCmdShow)
@@ -1097,6 +1218,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * and a shell launch does not always make that the exe's folder (one
      * started through explorer.exe ran in System32 and wrote nothing). */
     {
+#if defined(_WIN32)
         char path[MAX_PATH];
         DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
         if (n && n < MAX_PATH) {
@@ -1106,6 +1228,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 SetCurrentDirectoryA(path);
             }
         }
+#else
+        char path[4096];
+        ssize_t n = readlink("/proc/self/exe", path, sizeof path - 1);
+        if (n > 0) {
+            char *slash;
+            path[n] = 0;
+            slash = strrchr(path, '/');
+            if (slash && slash != path) {
+                *slash = 0;
+                if (chdir(path) != 0)
+                    perror("chdir");
+            }
+        }
+#endif
     }
 
     /* Keep the last runs' logs: a crash log used to be overwritten by the
@@ -1120,6 +1256,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * raw-handle writers (raw_stderr) at the same file. stdout (a few banner
      * lines) stays put: reopening it onto the same file failed fast in the
      * CRT (0xC0000409). */
+#if !defined(_WIN32)
+    /* POSIX: a desktop launch hands down /dev/null (or nothing); a terminal
+     * or a redirection is left alone. */
+    {
+        struct stat st;
+        if (fstat(2, &st) != 0 || (S_ISCHR(st.st_mode) && !isatty(2)))
+            if (!freopen("blinx2_recomp.log", "w", stderr))
+                perror("blinx2_recomp.log");
+    }
+#else
     {
         HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
         DWORD type = (h && h != INVALID_HANDLE_VALUE) ? GetFileType(h)
@@ -1135,6 +1281,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                              (HANDLE)_get_osfhandle(_fileno(stderr)));
         }
     }
+#endif
 
     /* stdout unbuffered; stderr fully buffered, flushed every 500 ms.
      *
@@ -1158,8 +1305,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * stand in for hardware -- the GPU-idle shim (Sleep(1)), the kernel
      * timer thread that raises vblank (Sleep(10)) -- otherwise sleep in
      * 15.6 ms steps, and D3D's fence wait (sub_002E8110) spent a third of the
-     * main thread's time waiting for the shim's next wake. */
+     * main thread's time waiting for the shim's next wake. (POSIX sleeps
+     * are not quantised like that: nothing to do.) */
+#if defined(_WIN32)
     timeBeginPeriod(1);
+#endif
 
     /* Raise the NV2A vblank interrupt (~60 Hz). D3D's ISR calls the title's
      * vertical-blank callback (0x000604A0, see recomp_manual.c), and the main
@@ -1404,7 +1554,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* After the XBE load, which titles the window from the certificate
      * ("BLiNX2"). */
     if (!s_headless)
+#if defined(_WIN32)
         xbox_FramebufferWindowSetTitle((const uint16_t *)L"Blinx 2 (recomp)", 47);
+#else
+        xbox_FramebufferWindowSetTitle((const uint16_t *)u"Blinx 2 (recomp)", 47);
+#endif
 
     /* Step 7: Call the recompiled entry point */
     printf("\nStarting game...\n");
@@ -1464,5 +1618,9 @@ int main(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
+#if defined(_WIN32)
     return WinMain(GetModuleHandle(NULL), NULL, GetCommandLineA(), SW_SHOW);
+#else
+    return WinMain(NULL, NULL, NULL, 0);
+#endif
 }
