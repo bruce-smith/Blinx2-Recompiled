@@ -326,6 +326,7 @@ extern void sub_00368457_gen(void);
  * per poll, 4 worker-thread completions, 5 device arrivals (each explained
  * where it is handled, below). Version 1 files (no events) still replay, but
  * drift after the first load or movie. */
+#include "cheats.h"
 #include "build_sha.h"                 /* written on every build (cmake/git_sha.cmake) */
 #ifndef BLINX2_GIT_SHA
 #define BLINX2_GIT_SHA "unknown"
@@ -358,6 +359,7 @@ static int      s_rp_ended, s_rp_desync;
 #define IN_EVT_VBLANK_BIG 3u                   /* value: vblanks before one poll */
 #define IN_EVT_DONE     4u                     /* value: index of a "finished" answer */
 #define IN_EVT_DEVCHG   5u                     /* call index, type, inserted, removed */
+#define IN_EVT_CHEAT    6u                     /* a cheat applied at this poll (cheats.c) */
 typedef struct { uint32_t call, type, ins, rem; } DevChg;
 static DevChg  *s_ev_dev;                      /* replay: device changes, in order */
 static uint32_t s_ev_dev_n;
@@ -582,6 +584,35 @@ static void vb_flush(void)
     fwrite(&r, sizeof r, 1, s_in_file);
     fflush(s_in_file);
     s_vb_buf[0] = 0;
+}
+
+/* For cheats.c: 0 no recording, 1 recording (live input), 2 replaying. A
+ * RECOMP_INPUT_REPLAY_THEN_LIVE replay that has handed over counts as live. */
+int input_rec_mode(void)
+{
+    if (s_in_mode < 0)
+        return 0;
+    if (s_in_mode == 2 && s_rp_ended && getenv("RECOMP_INPUT_REPLAY_THEN_LIVE"))
+        return s_in_file ? 1 : 0;
+    return s_in_mode;
+}
+
+/* A cheat applied at the current poll, as an event record (IN_EVT_CHEAT,
+ * 22-byte payload), so a replay applies it at the same poll. */
+void input_rec_cheat_event(const uint8_t *data)
+{
+    InputRec r;
+    if (!s_in_file)
+        return;
+    vb_flush();                     /* keep the records in poll order */
+    memset(&r, 0, sizeof r);
+    r.poll = s_in_poll ? s_in_poll - 1 : 0;
+    r.vbl = s_vbl_total;
+    r.handle = IN_EVT;
+    r.result = IN_EVT_CHEAT;
+    memcpy(r.state, data, 22);
+    fwrite(&r, sizeof r, 1, s_in_file);
+    fflush(s_in_file);
 }
 
 /* Each poll: record the vblanks raised since the last one, or (replay) make
@@ -814,8 +845,11 @@ static void input_rec_poll(const uint8_t *mem, uint32_t handle, uint32_t state)
         /* Apply every record due at this poll. Records are in poll order. */
         while (s_rp_next < s_rp_n && s_rp[s_rp_next].poll <= poll) {
             const InputRec *r = &s_rp[s_rp_next++];
-            if (r->handle == IN_EVT)
+            if (r->handle == IN_EVT) {
+                if (r->result == IN_EVT_CHEAT)  /* applied after this poll, as recorded */
+                    cheats_replay_event(r->state);
                 continue;
+            }
             for (slot = 0; slot < 8; slot++)
                 if (s_in_last[slot].handle == r->handle || !s_in_last[slot].handle)
                     break;
@@ -1083,7 +1117,10 @@ void sub_00368457(void)
     uint32_t state  = *(const uint32_t *)(mem + g_esp + 8);
 
     sub_00368457_gen();
+    if (state)
+        cheats_pre_poll((uint8_t *)mem + state);
     input_rec_poll(mem, handle, state);
+    cheats_on_poll(s_in_poll);
 
     if (trace < 0)
         trace = getenv("RECOMP_XINPUT_TRACE") != NULL;
@@ -1358,6 +1395,41 @@ void sub_001645A0(void)
         }
     }
     sub_001645A0_gen();
+}
+
+/* ── Cheat hooks (cheats.c) ────────────────────────────────────────────
+ *
+ * The game's hit routine, cdecl (victim actor, attacker, 6 more dwords):
+ * subtracts the damage from the victim's HP (+0x6C), knocks it back and
+ * spawns the hit effects. With invincibility on, a human-controlled victim
+ * is not hit at all. Off, it is the generated body unchanged. */
+extern void sub_0019B790_gen(void);
+
+void sub_0019B790(void)
+{
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    if (cheats_block_damage(*(const uint32_t *)(mem + g_esp + 4))) {
+        g_eax = 0;
+        g_esp += 4;                 /* ret; the caller pops the arguments */
+        return;
+    }
+    sub_0019B790_gen();
+}
+
+/* The view-matrix build, camera struct in ebx (identity, the struct's
+ * angles, then its eye; into 0xA72380, D3D's view, and the inverse at
+ * 0xA9C220). The free camera substitutes its pose for this one build and
+ * puts the game's camera back afterwards. */
+extern __declspec(thread) uint32_t g_ebx;
+extern void sub_000292A0_gen(void);
+
+void sub_000292A0(void)
+{
+    uint32_t cam = g_ebx;
+    int fc = cheats_view_begin(cam);
+    sub_000292A0_gen();
+    if (fc)
+        cheats_view_end(cam);
 }
 
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
