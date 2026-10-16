@@ -347,32 +347,35 @@ def node_matrix(o, extra=None):
 
 # The body-shape sliders, as measured in the running game (character data
 # +0x54.. poked to +-50 one at a time, bone matrices compared): each scales
-# its bone by 1 + value/100 on the given local axes, or moves it by
-# 0.02 * value along them. Same bone numbering in the Sweeper and the
-# Tom-Tom trees. Chest, waist, hip, leg, foot, arm, tails, shoulder and braid
-# changed no bone transform in a stage.
-SLIDER_BONES = {0x55: ((74, 78), (1, 0, 0), "scale"),    # ear: ear length
-                0x5D: ((58,), (0, 1, 1), "scale"),       # head
-                0x63: ((48,), (0, 1, 1), "scale"),       # collar
-                0x61: ((13,), (0, 1, 0), "move"),        # body length
-                0x62: ((120, 135), (1, 0, 0), "move")}   # leg length
+# its bone by 1 + value/100 on the given local axes, or moves it along the
+# given vector times value. Same bone numbering in the Sweeper and the
+# Tom-Tom trees. Chest, waist, hip, leg, foot, arm, tails and braid changed
+# no bone transform in a stage.
+SLIDER_BONES = {0x55: [((74, 78), (1, 0, 0), "scale")],          # ear: ear length
+                0x5D: [((58,), (0, 1, 1), "scale")],             # head
+                0x63: [((48,), (0, 1, 1), "scale")],             # collar
+                0x61: [((13,), (0, 0.02, 0), "move")],           # body length
+                0x62: [((120, 135), (0.02, 0, 0), "move")],      # leg length
+                0x60: [((15,), (0, 0, -0.01), "move"),           # shoulder width
+                       ((32,), (0, 0, 0.01), "move")]}
 
 
 def slider_scales(data):
     """character data {offset: byte} -> {bone: (scale[3], offset[3])}."""
     out = {}
-    for off, (bones, axes, kind) in SLIDER_BONES.items():
+    for off, entries in SLIDER_BONES.items():
         v = struct.unpack("b", bytes([data.get(off, 0)]))[0]
         if not v:
             continue
-        ax = np.array(axes, float)
-        for b in bones:
-            sc, mv = out.get(b, (np.ones(3), np.zeros(3)))
-            if kind == "scale":
-                sc = sc * np.where(ax > 0, 1.0 + v / 100.0, 1.0)
-            else:
-                mv = mv + ax * 0.02 * v
-            out[b] = (sc, mv)
+        for bones, axes, kind in entries:
+            ax = np.array(axes, float)
+            for b in bones:
+                sc, mv = out.get(b, (np.ones(3), np.zeros(3)))
+                if kind == "scale":
+                    sc = sc * np.where(ax > 0, 1.0 + v / 100.0, 1.0)
+                else:
+                    mv = mv + ax * v
+                out[b] = (sc, mv)
     return out
 
 

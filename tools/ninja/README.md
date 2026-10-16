@@ -98,10 +98,10 @@ Options:
   at `--fps` frames per second (default 30). The game names its motions by
   table index only, so the names are offsets. Body-shape
   sliders, as measured in the running game: ear, head and collar scale
-  their bone by 1 + value/100, body and leg length move their bones by
-  0.02 * value. Chest, waist, hip, leg, foot, arm, tails, shoulder and
-  braid changed no bone transform in a stage; thigh's small effect on the
-  leg bones is not applied yet.
+  their bone by 1 + value/100; body and leg length move their bones by
+  0.02 * value, shoulder width by 0.01 * value. Chest, waist, hip, leg,
+  foot, arm, tails and braid changed no bone transform in a stage; the
+  thigh slider (it shortens the leg bones) is not applied yet.
   Tom-Tom colours above 19 keep the texture's own palette.
 - `--grid <spacing>`: lay the top-level groups out in a grid. Useful for
   part and prop libraries such as `MDLPL`, where everything sits at the
