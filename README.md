@@ -103,9 +103,11 @@ rename or repack anything.
 The exe looks for the game files in this order:
 
 1. the folder in the environment variable `RECOMP_GAME_DIR`;
-2. a `game_files` folder next to `blinx_2_recomp.exe`, if it holds
+2. the folder in `blinx2_settings.ini` (next to the exe) as
+   `game_dir=<path>` under a `[paths]` line (at most 95 characters);
+3. a `game_files` folder next to `blinx_2_recomp.exe`, if it holds
    `default.xbe`;
-3. the folder set at configure time with `-DBLINX2_GAME_DIR=<path>`.
+4. the folder set at configure time with `-DBLINX2_GAME_DIR=<path>`.
 
 It logs the folder it uses (`[BOOT] game files: ...`). Your saves
 (`UDATA`/`TDATA`) are written into that folder.
@@ -271,6 +273,66 @@ To turn it off, set Smooth Motion / Fluid Motion Frames back to off.
 Without Vulkan presentation (the default window) the drivers have nothing to
 work on, so nothing changes. The Escape menu is drawn over the picture in
 every mode.
+
+### Network play
+
+Two to four players, each on their own PC, play the local multiplayer
+modes (Vs. Mode) together. Every PC runs the whole game and only pad input
+travels, so all players see the same game. It is meant for a LAN, a direct
+connection or a VPN; there is no matchmaking or internet relay.
+
+1. Every player needs the **same build**: copy the whole `build\Release`
+   folder to the other PCs (the join check compares the exe). Each player
+   needs their own game files: a `game_files` folder next to the copied exe
+   is simplest (see "Extracting the game files" above).
+2. The host opens the menu (Escape) > Network, chooses **Host a game**, sets
+   the number of players and the input delay, and presses **Start network
+   game (host)**. The game restarts and waits for the others.
+3. Each other player chooses **Join a game**, enters the host's IP address
+   and the same port, and presses **Join network game**.
+4. Once everyone has joined, all the games start from power-on together.
+   The host is player 1 (controller port 1); joiners get ports 2, 3, 4 in
+   the order they joined. Every player plays with their own keyboard or pad
+   (their port-1 bindings).
+
+Things to know:
+
+- **Port:** 27350 by default, **UDP and TCP** (input travels over UDP; the
+  host sends its saves over TCP). On the host, allow `blinx_2_recomp.exe`
+  through the Windows firewall for private networks (Windows asks the first
+  time; answer Allow). Joiners need nothing opened.
+- **Across the internet:** use a VPN that puts the PCs on one virtual LAN,
+  for example [Tailscale](https://tailscale.com) (free for personal use):
+  install it on every PC, sign in to the same account (or share the host's
+  machine), and join with the host's Tailscale address (`100.x.y.z`).
+  Opening a port on your router also works but is not needed with a VPN.
+- **Input delay:** each player's input takes effect this many frames later
+  (3 frames = 50 ms, enough for a LAN or a nearby VPN). Raise it if the game
+  stutters; the slowest connection sets the pace for everyone.
+- **Saves:** the host's saves are sent to every player for that game. Each
+  player plays on a copy in `%LOCALAPPDATA%\xboxrecomp\netplay`; nobody's
+  own saves are touched.
+- **Split screen:** the game draws a split screen, as on one Xbox. Menu >
+  Graphics > View: **auto** enlarges your own part of it (two players:
+  player 1 top, player 2 bottom; three or four: player 1 top-left, 2
+  bottom-left, 3 top-right, 4 bottom-right) and shows the whole picture
+  while the game is not split. Auto applies to the plain window (Vulkan
+  display shows the whole frame).
+- **Display:** by default the software renderer draws and shows the game,
+  which keeps every PC exactly in step. Menu > Network > **Vulkan display
+  (AA)** keeps the software renderer for everything the game reads back and
+  lets Vulkan show the picture, smoothed. It is not faster, and an effect
+  may hitch the first time it appears. It changes only your own screen.
+- **If the games drift apart** (a desync), every game stops and says so,
+  and writes next to its exe `netplay_report.txt` (what happened and at
+  which frame) plus `netplay_desync_f<frame>_p<player>.bin` (a hash of each
+  page of guest memory). Please attach both, from every player, together
+  with `blinx2_recomp.log`, to a bug report. If a player closes their game,
+  the others stop with "player N left the game".
+
+Without the menu: `RECOMP_NET=host:27350` or
+`RECOMP_NET=join:<host ip>:27350`, with `RECOMP_NET_PLAYERS=<2-4>`,
+`RECOMP_NET_DELAY=<frames>` and `RECOMP_NET_VK=1` (Vulkan display).
 
 ## Exporting stages and characters (glTF)
 

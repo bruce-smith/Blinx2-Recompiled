@@ -121,8 +121,9 @@ extern ptrdiff_t g_xbox_mem_offset;
 /* The directory of the extracted game files: default.xbe and the .ipk/.iph
  * archives, as unpacked from the disc image. In order:
  *   1. RECOMP_GAME_DIR, if set;
- *   2. game_files\ next to the exe, if it holds default.xbe;
- *   3. BLINX2_GAME_DIR, set when configuring with CMake
+ *   2. game_dir= under [paths] in blinx2_settings.ini, if set;
+ *   3. game_files\ next to the exe, if it holds default.xbe;
+ *   4. BLINX2_GAME_DIR, set when configuring with CMake
  *      (-DBLINX2_GAME_DIR=...; default E:/Blinx2project/game_files).
  * Saves (UDATA/TDATA) live in this directory unless RECOMP_SAVE_DIR moves
  * them. Called once the working directory is the exe's own folder. */
@@ -137,8 +138,12 @@ static char g_exe_dir[4096] = ".";
 static void resolve_game_dir(void)
 {
     const char *env = getenv("RECOMP_GAME_DIR");
-    char next_to_exe[4096 + 32];
+    char next_to_exe[4096 + 32], ini[4096];
     size_t n;
+
+    xbox_setting_get_str("paths", "game_dir", "", ini, sizeof ini);
+    if (!(env && *env) && ini[0])
+        env = ini;
 
     snprintf(next_to_exe, sizeof next_to_exe, "%s/game_files", g_exe_dir);
     if (env && *env)
@@ -155,8 +160,12 @@ static void resolve_game_dir(void)
 static void resolve_game_dir(void)
 {
     const char *env = getenv("RECOMP_GAME_DIR");
-    char *p;
+    char *p, ini[MAX_PATH];
     size_t n;
+
+    xbox_setting_get_str("paths", "game_dir", "", ini, sizeof ini);
+    if (!(env && *env) && ini[0])
+        env = ini;
 
     if (env && *env) {
         snprintf(g_game_dir, sizeof g_game_dir, "%s", env);
@@ -1470,8 +1479,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         snprintf(msg, sizeof msg,
                  "Failed to load %s.\n\n"
                  "Extract your own disc's files (default.xbe and the .ipk/.iph "
-                 "archives) to a game_files folder next to this exe, or set "
-                 "RECOMP_GAME_DIR to the folder that holds them.",
+                 "archives) to a game_files folder next to this exe, or name "
+                 "the folder that holds them: game_dir= under [paths] in "
+                 "blinx2_settings.ini, or RECOMP_GAME_DIR.",
                  BLINX_2_XBE_PATH);
         MessageBoxA(NULL, msg, "Blinx 2 (recomp)", MB_ICONERROR);
         return 1;
