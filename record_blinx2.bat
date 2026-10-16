@@ -18,10 +18,12 @@ setlocal
 rem Where the exe keeps saves when RECOMP_SAVE_DIR is not set (src\main.c):
 rem UDATA/TDATA in the game folder, the Z: cache under %LOCALAPPDATA%.
 rem The game folder is found as the exe finds it: RECOMP_GAME_DIR, else
-rem game_files next to the exe, else the build's default (BLINX2_GAME_DIR in
-rem CMakeLists.txt; change GAME_DIR below if you configured another one).
+rem game_dir= in blinx2_settings.ini next to the exe, else game_files next to
+rem the exe, else the build's default (BLINX2_GAME_DIR in CMakeLists.txt;
+rem change GAME_DIR below if you configured another one).
 set "GAME_DIR=E:\Blinx2project\game_files"
 if exist "%~dp0build\Release\game_files\default.xbe" set "GAME_DIR=%~dp0build\Release\game_files"
+if exist "%~dp0build\Release\blinx2_settings.ini" for /f "usebackq tokens=1,* delims==" %%a in (`findstr /b /c:"game_dir=" "%~dp0build\Release\blinx2_settings.ini"`) do if not "%%b"=="" set "GAME_DIR=%%b"
 if defined RECOMP_GAME_DIR set "GAME_DIR=%RECOMP_GAME_DIR%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0record_blinx2.ps1" ^
     -ExeDir "%~dp0build\Release" ^

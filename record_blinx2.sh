@@ -34,6 +34,8 @@ fi
 # Where the saves are when RECOMP_SAVE_DIR is not set: UDATA/TDATA in the game
 # folder (found as the game finds it), the Z: cache under the XDG data dir.
 game_dir="${RECOMP_GAME_DIR:-}"
+[ -z "$game_dir" ] && [ -f "$exe_dir/blinx2_settings.ini" ] \
+    && game_dir="$(sed -n 's/^[[:space:]]*game_dir[[:space:]]*=[[:space:]]*//p' "$exe_dir/blinx2_settings.ini" | head -1 | tr -d '\r')"
 [ -z "$game_dir" ] && [ -f "$exe_dir/game_files/default.xbe" ] && game_dir="$exe_dir/game_files"
 if [ -z "$game_dir" ]; then
     for cache in "$exe_dir/CMakeCache.txt" "$exe_dir/../CMakeCache.txt"; do
