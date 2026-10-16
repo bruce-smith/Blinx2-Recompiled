@@ -1400,12 +1400,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
                 _putenv_s(on[i], "1");
     }
 
-    /* A network game (RECOMP_NET=host:<port> | join:<ip>:<port>): waits here
-     * for the session, then sets what every peer must run alike -- virtual
-     * mode, one pad per player, software rendering for what the guest reads
-     * back -- before anything reads those settings (xboxrecomp src/net). */
-    xbox_NetplayStart();
-
     /* Sound: the emulated APU (RECOMP_AC97_READY: trap its registers, run the
      * voice processor, play through XAudio2). On by default in the playable
      * exe; RECOMP_AUDIO=0 turns it off. Headless runs stay silent unless they
@@ -1460,6 +1454,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Step 1: Load XBE */
     resolve_game_dir();
     fprintf(stderr, "[BOOT] game files: %s\n", BLINX_2_DIR);
+
+    /* A network game (RECOMP_NET=host:<port> | join:<ip>:<port>): waits here
+     * for the session -- the host hands its saves to every joiner, everyone
+     * plays on a session copy with a fresh Z: cache -- then sets what every
+     * peer must run alike (virtual mode, one pad per player, software
+     * rendering for what the guest reads back) before anything reads those
+     * settings (xboxrecomp src/net). */
+    xbox_NetplayStart(BLINX_2_DIR);
     if (!load_xbe(BLINX_2_XBE_PATH, &xbe_data, &xbe_size)) {
         char msg[MAX_PATH + 256];
         snprintf(msg, sizeof msg,
