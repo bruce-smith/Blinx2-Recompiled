@@ -96,9 +96,10 @@ Options:
   u32 frame + 3 floats; angle keys u16 frame + 3 signed 16-bit angles. They
   are resampled per frame with the short-way interpolation of the angles,
   at `--fps` frames per second (default 30). The game names its motions by
-  table index only, so the names are offsets. Not applied
-  yet: the body-shape sliders (preset bytes 24-41), and Tom-Tom colours
-  above 19, which keep the texture's own palette.
+  table index only, so the names are offsets. Body-shape
+  sliders: ear, head and collar are applied (each scales its bone by
+  1 + value/100, as measured in the running game); the others are not yet.
+  Tom-Tom colours above 19 keep the texture's own palette.
 - `--grid <spacing>`: lay the top-level groups out in a grid. Useful for
   part and prop libraries such as `MDLPL`, where everything sits at the
   origin.
