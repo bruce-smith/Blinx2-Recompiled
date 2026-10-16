@@ -25,6 +25,7 @@
 
 #include "cheats.h"
 #include "xbox_ui.h"        /* the in-game menu's panel */
+#include "netplay.h"        /* lockstep network play */
 
 extern ptrdiff_t g_xbox_mem_offset;
 extern CHEATS_TLS uint32_t g_eax, g_ecx, g_edx, g_esp;
@@ -83,7 +84,7 @@ static int team_now(void)
  * little-endian arguments. The UI fills the queue; the game thread drains
  * it at the poll, applies each and records it. */
 
-enum { OP_NONE, OP_MONEY, OP_INVINCIBLE, OP_WARP, OP_FREECAM, OP_CAMPOSE, OP_ITEM, OP_AMMO, OP_SPAWN, OP_TIMECTRL };
+enum { OP_NONE, OP_MONEY, OP_INVINCIBLE, OP_WARP, OP_FREECAM, OP_CAMPOSE, OP_ITEM, OP_AMMO, OP_SPAWN, OP_TIMECTRL, OP_POS, OP_ROOM };
 
 typedef struct { uint8_t b[22]; } Req;
 #define QLEN 32
@@ -118,8 +119,10 @@ static int q_pop(Req *r)
 
 static int ui_allowed(void)
 {
-    /* a replay decides what happens; the UI's requests would desync it */
-    return input_rec_mode() != 2;
+    /* A replay decides what happens; the UI's requests would desync it. In
+     * a network game a cheat applied on one peer only would desync the
+     * others, and nothing carries it to them yet. */
+    return input_rec_mode() != 2 && !xbox_NetplayActive();
 }
 
 static void req(uint8_t op, int32_t a, int32_t b)
@@ -699,6 +702,11 @@ static void menu_draw(void *ctx)
         xbox_ui_text("An input replay is running: it applies the cheats it recorded.");
         return;
     }
+    if (xbox_NetplayActive()) {
+        xbox_ui_text("Cheats are off in network play: the other players' games would "
+                     "no longer match yours.");
+        return;
+    }
     if (!cheats_in_game())
         xbox_ui_text("Not in a stage or hub: warp, invincibility and the free camera "
                      "wait until play starts.");
@@ -870,6 +878,37 @@ static int apply(const Req *r)
         fprintf(stderr, "  [CHEAT] free camera %s%s\n", a ? "on" : "off",
                 a && b ? " (player frozen)" : "");
         return 1;
+    case OP_ROOM:                   /* tests: enter a hub room as its door does */
+        if (!cheats_in_game() || (a != 7 && a != 0x13 && a != 0x18 && a != 0x19))
+            return 0;
+        /* sub_00149850's door branches (0x14A136..0x14A19D), minus the
+         * walk-in animation (sub_001492E0) and the door sound */
+        M32(0x00885DF0u) = 0;
+        M32(0x00AE7424u) = (uint32_t)a;          /* next main mode */
+        M32(0x00EC4F84u) = (uint32_t)a;
+        M32(G_STAGE_CHANGE) = 2;
+        MF(0x00A8A8D0u) = 0.05f;
+        MF(0x0065DEF4u) = 1.0f;
+        M32(0x00AE718Cu) = 0x1E;
+        M32(0x00B8BF40u) += 1;
+        fprintf(stderr, "  [CHEAT] room %d entered\n", a);
+        return 1;
+    case OP_POS:                    /* tests: put player 1 at x, y, z */
+        if (!cheats_in_game())
+            return 0;
+        {
+            int32_t c3;
+            float y0 = MF(ACTORS + A_POS + 4);
+            memcpy(&c3, r->b + 9, 4);
+            fprintf(stderr, "  [CHEAT] player 1 at (%.1f, %.1f, %.1f)\n",
+                    MF(ACTORS + A_POS), y0, MF(ACTORS + A_POS + 8));
+            MF(ACTORS + A_POS) = (float)a;
+            MF(ACTORS + A_POS + 4) = b == 9999 ? y0 : (float)b;   /* 9999: keep height */
+            MF(ACTORS + A_POS + 8) = (float)c3;
+            fprintf(stderr, "  [CHEAT] player 1 moved to (%d, %.1f, %d)\n", a,
+                    MF(ACTORS + A_POS + 4), c3);
+        }
+        return 1;
     case OP_TIMECTRL:
         if (a == 2) {               /* hold full */
             s_tc_hold = b != 0;
@@ -905,43 +944,73 @@ void cheats_replay_event(const uint8_t *data)
  * fixed polls of an input replay (poll numbers count only while input is
  * recorded or replayed). Cheats: money:<team>:<amount>, invincible:<0|1>,
  * warp:<list index>, freecam:<0|1>:<freeze>, item:<team>:<list index|-1>,
- * ammo:<0|1>. They bypass the "a replay
+ * ammo:<0|1>, and two for tests only: pos:<x>:<y|9999 keeps it>:<z> moves
+ * player 1, room:<7 shop|0x13 theater|0x18 garage|0x19 locker> enters a hub
+ * room. A leading '+' makes every <poll> a delay after the previous entry,
+ * counted from when play (stage or hub) is on. Ignored in network play.
+ * They bypass the "a replay
  * decides" rule, so do not combine them with a replay of a cheated run. */
 static void script_poll(uint32_t poll)
 {
-    static int n = -1, next;
+    static int n = -1, next, relative;
+    static uint32_t last;
     static struct { uint32_t poll; Req r; } sc[128];
     if (n < 0) {
         const char *s = getenv("RECOMP_CHEAT_SCRIPT");
         n = 0;
+        /* "+<delay>:..." entries: each waits <delay> polls after the one
+         * before it was released, and for play to be on (stage or hub) --
+         * for runs that reach the hub by live input, at no fixed poll. */
+        if (s && *s == '+') {
+            relative = 1;
+            s++;
+        }
         while (s && *s && n < 128) {
             static const char *const ops[] = { "", "money", "invincible", "warp", "freecam",
-                                                "campose", "item", "ammo", "spawn", "timectrl" };
+                                                "campose", "item", "ammo", "spawn", "timectrl", "pos", "room" };
             char *e;
-            int32_t a = 0, b = 0;
+            int32_t a = 0, b = 0, c3 = 0;
             uint8_t op = 0, k;
             sc[n].poll = (uint32_t)strtoul(s, &e, 0);
             if (*e++ != ':')
                 break;
-            for (k = 1; k < 10; k++)
+            for (k = 1; k < sizeof ops / sizeof ops[0]; k++)
                 if (!strncmp(e, ops[k], strlen(ops[k]))) {
                     op = k;
                     e += strlen(ops[k]);
                 }
             if (*e == ':') a = (int32_t)strtol(e + 1, &e, 0);
             if (*e == ':') b = (int32_t)strtol(e + 1, &e, 0);
+            if (*e == ':') c3 = (int32_t)strtol(e + 1, &e, 0);
             memset(&sc[n].r, 0, sizeof sc[n].r);
             sc[n].r.b[0] = op;
             memcpy(sc[n].r.b + 1, &a, 4);
             memcpy(sc[n].r.b + 5, &b, 4);
+            memcpy(sc[n].r.b + 9, &c3, 4);
             if (op)
                 n++;
             s = strchr(e, ';');
-            if (s)
+            if (s) {
                 s++;
+                if (*s == '+')
+                    s++;
+            }
         }
         if (n)
             fprintf(stderr, "  [CHEAT] script: %d requests\n", n);
+    }
+    if (n && xbox_NetplayActive()) {         /* see ui_allowed */
+        if (next < n)
+            fprintf(stderr, "  [CHEAT] script ignored: network play\n");
+        next = n;
+        return;
+    }
+    if (relative) {
+        if (next < n && poll - last >= sc[next].poll && cheats_in_game()) {
+            last = poll;
+            q_push(&sc[next++].r);
+        }
+        return;
     }
     while (next < n && sc[next].poll <= poll)
         q_push(&sc[next++].r);
