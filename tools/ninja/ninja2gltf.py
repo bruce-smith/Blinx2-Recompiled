@@ -331,19 +331,42 @@ def euler_quat(ang, zxy):
     return (q / np.linalg.norm(q)).tolist()
 
 
-def node_matrix(o):
-    """4x4 local matrix of an NJS_OBJECT: T * R * S."""
+def node_matrix(o, extra=None):
+    """4x4 local matrix of an NJS_OBJECT: T * R * S (S times extra, if given)."""
     x, y, z, w = euler_quat(o["ang"], o["flags"] & 0x20)
     r = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
                   [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
                   [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
     m = np.eye(4)
-    m[:3, :3] = r * np.array(o["scl"])
+    m[:3, :3] = r * (np.array(o["scl"]) * (extra if extra is not None else 1.0))
     m[:3, 3] = o["pos"]
     return m
 
 
-def skinned_mesh(sec, root):
+# The body-shape sliders, as measured in the running game (character data
+# +0x54.. poked to +-50 one at a time, bone matrices compared): each scales
+# its bone by 1 + value/100 on the given local axes. Same bone numbering in
+# the Sweeper and the Tom-Tom trees. The other sliders change no bone
+# transform (still being measured).
+SLIDER_BONES = {0x55: ((74, 78), (1, 0, 0)),     # ear: ear length
+                0x5D: ((58,), (0, 1, 1)),        # head
+                0x63: ((48,), (0, 1, 1))}        # collar
+
+
+def slider_scales(data):
+    """character data {offset: byte} -> {bone: (sx, sy, sz)}."""
+    out = {}
+    for off, (bones, axes) in SLIDER_BONES.items():
+        v = struct.unpack("b", bytes([data.get(off, 0)]))[0]
+        if v:
+            f = 1.0 + v / 100.0
+            for b in bones:
+                cur = out.get(b, np.ones(3))
+                out[b] = cur * np.where(np.array(axes) > 0, f, 1.0)
+    return out
+
+
+def skinned_mesh(sec, root, extra=None):
     """A weighted chunk model (a character) in bind pose.
 
     Nodes write their vertices, in their own space, into one vertex buffer
@@ -371,8 +394,8 @@ def skinned_mesh(sec, root):
     def walk(p, parent, pw, depth):
         while p and depth < 256:
             o = read_object(sec, p)
-            w = pw @ node_matrix(o)
             me = len(nodes)
+            w = pw @ node_matrix(o, (extra or {}).get(me))
             nodes.append((o, parent, w))
             if o["model"]:
                 vl, pl = sec.unpack("<II", o["model"])
@@ -802,17 +825,19 @@ def main(argv=None):
             matcache[mkey] = len(g.j["materials"]) - 1
         return matcache[mkey]
 
-    def emit_skinned(r, names):
-        """One skinned mesh; the tree's nodes are its joints."""
+    def emit_skinned(r, names, extra=None):
+        """One skinned mesh; the tree's nodes are its joints. extra: the
+        body-shape sliders as {bone: scale}."""
         nonlocal ntri
-        nodes, tris = skinned_mesh(sec, r)
+        extra = extra or {}
+        nodes, tris = skinned_mesh(sec, r, extra)
         flip = np.diag([1.0, 1.0, -1.0, 1.0])     # the root node's scale
         first = len(g.j["nodes"])
         for k, (o, parent, _w) in enumerate(nodes):
             g.j["nodes"].append({"name": "bone%03d_%08X" % (k, o["addr"]),
                                  "translation": list(o["pos"]),
                                  "rotation": euler_quat(o["ang"], o["flags"] & 0x20),
-                                 "scale": list(o["scl"])})
+                                 "scale": (np.array(o["scl"]) * extra.get(k, 1.0)).tolist()})
             kids = root["children"] if parent < 0 else                 g.j["nodes"][first + parent].setdefault("children", [])
             kids.append(first + k)
         ibm = np.array([np.linalg.inv(flip @ w).T for _o, _p, w in nodes], np.float32)
@@ -943,6 +968,7 @@ def main(argv=None):
         for r in sel:
             if args.skin:
                 names = names_of.get(r)
+                extra = None
                 if (args.edt or args.save) and names:
                     if args.edt:
                         data, who = char_data(edt=open(args.edt, "rb").read())
@@ -954,10 +980,11 @@ def main(argv=None):
                         data, who = char_data(save=sv, team=args.team, slot=args.slot)
                         print(f"exporting {args.team}{args.slot}: {who}")
                     names, cols, sliders = editor_textures(xbe, data, names)
+                    extra = slider_scales(data)
                     part_colours.update(cols)
                     print("preset textures:", ", ".join(
                         n + ("/P%02d" % cols[n.lower()] if n.lower() in cols else "") for n in names))
-                emit_skinned(r, names)
+                emit_skinned(r, names, extra)
             else:
                 emit(r, root["children"], names_of.get(r))
     else:
