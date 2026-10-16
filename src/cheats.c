@@ -119,10 +119,8 @@ static int q_pop(Req *r)
 
 static int ui_allowed(void)
 {
-    /* A replay decides what happens; the UI's requests would desync it. In
-     * a network game a cheat applied on one peer only would desync the
-     * others, and nothing carries it to them yet. */
-    return input_rec_mode() != 2 && !xbox_NetplayActive();
+    /* a replay decides what happens; the UI's requests would desync it */
+    return input_rec_mode() != 2;
 }
 
 static void req(uint8_t op, int32_t a, int32_t b)
@@ -702,11 +700,9 @@ static void menu_draw(void *ctx)
         xbox_ui_text("An input replay is running: it applies the cheats it recorded.");
         return;
     }
-    if (xbox_NetplayActive()) {
-        xbox_ui_text("Cheats are off in network play: the other players' games would "
-                     "no longer match yours.");
-        return;
-    }
+    if (xbox_NetplayActive())
+        xbox_ui_text("Network play: every cheat applies in every player's game, a few "
+                     "frames later. The free camera is off.");
     if (!cheats_in_game())
         xbox_ui_text("Not in a stage or hub: warp, invincibility and the free camera "
                      "wait until play starts.");
@@ -753,15 +749,17 @@ static void menu_draw(void *ctx)
             cheats_spawn_pickup(s_pickups[pick].type, 0);
     }
 
-    xbox_ui_separator();
-    v = cheats_freecam_enabled();
-    if (xbox_ui_checkbox("Free camera", &v))
-        cheats_freecam_enable(v, freeze);
-    xbox_ui_same_line();
-    if (xbox_ui_checkbox("Freeze the player", &freeze) && cheats_freecam_enabled())
-        cheats_freecam_enable(1, freeze);
-    xbox_ui_text("Left stick move, right stick look, LT/RT down/up, hold A for speed "
-                 "(keyboard: numpad, I/J/K/L, 1/3, Z).");
+    if (!xbox_NetplayActive()) {    /* it steers from this player's input only */
+        xbox_ui_separator();
+        v = cheats_freecam_enabled();
+        if (xbox_ui_checkbox("Free camera", &v))
+            cheats_freecam_enable(v, freeze);
+        xbox_ui_same_line();
+        if (xbox_ui_checkbox("Freeze the player", &freeze) && cheats_freecam_enabled())
+            cheats_freecam_enable(1, freeze);
+        xbox_ui_text("Left stick move, right stick look, LT/RT down/up, hold A for speed "
+                     "(keyboard: numpad, I/J/K/L, 1/3, Z).");
+    }
 
     xbox_ui_separator();
     {
@@ -947,7 +945,8 @@ void cheats_replay_event(const uint8_t *data)
  * ammo:<0|1>, and two for tests only: pos:<x>:<y|9999 keeps it>:<z> moves
  * player 1, room:<7 shop|0x13 theater|0x18 garage|0x19 locker> enters a hub
  * room. A leading '+' makes every <poll> a delay after the previous entry,
- * counted from when play (stage or hub) is on. Ignored in network play.
+ * counted from when play (stage or hub) is on. In network play they travel
+ * to every peer like the tab's requests (set it for one peer only).
  * They bypass the "a replay
  * decides" rule, so do not combine them with a replay of a cheated run. */
 static void script_poll(uint32_t poll)
@@ -999,12 +998,6 @@ static void script_poll(uint32_t poll)
         if (n)
             fprintf(stderr, "  [CHEAT] script: %d requests\n", n);
     }
-    if (n && xbox_NetplayActive()) {         /* see ui_allowed */
-        if (next < n)
-            fprintf(stderr, "  [CHEAT] script ignored: network play\n");
-        next = n;
-        return;
-    }
     if (relative) {
         if (next < n && poll - last >= sc[next].poll && cheats_in_game()) {
             last = poll;
@@ -1026,10 +1019,26 @@ void cheats_on_poll(uint32_t poll)
         trace_poll(poll);
     script_poll(poll);
     /* Applied requests go to the recording (or a re-recording), if any, so
-     * a replay redoes them at this poll. */
-    while (q_pop(&r))
+     * a replay redoes them at this poll.
+     *
+     * In a network game a request is not applied here: it travels with this
+     * player's input, and every peer applies the same requests at the same
+     * frame, in the same order (xbox_NetplayCheatNext). The free camera
+     * steers from local input, so it stays off there. */
+    while (q_pop(&r)) {
+        if (xbox_NetplayActive()) {
+            if (r.b[0] == OP_FREECAM || r.b[0] == OP_CAMPOSE)
+                continue;
+            if (xbox_NetplayCheatSend(r.b))
+                continue;
+        }
         if (apply(&r))
             input_rec_cheat_event(r.b);
+    }
+    if (xbox_NetplayActive())
+        while (xbox_NetplayCheatNext(r.b))
+            if (r.b[0] != OP_FREECAM && r.b[0] != OP_CAMPOSE && apply(&r))
+                input_rec_cheat_event(r.b);
     {   /* Free camera: one step per game frame (the poll runs per pad). */
         static uint32_t last_frame;
         uint32_t frame = M32(0x00AE7180u);
