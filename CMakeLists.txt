@@ -107,6 +107,7 @@ set(BLINX2_SHA_DIR ${CMAKE_CURRENT_BINARY_DIR}/build_sha)
 add_custom_target(blinx2_git_sha ALL
     COMMAND ${CMAKE_COMMAND} -DOUT=${BLINX2_SHA_DIR}/build_sha.h
             -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -DGIT=${GIT_EXECUTABLE}
+            -DGEN=${CMAKE_CURRENT_SOURCE_DIR}/src/recomp/gen
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/git_sha.cmake
     BYPRODUCTS ${BLINX2_SHA_DIR}/build_sha.h
     COMMENT "Stamping the build with both repos' commits"

@@ -282,7 +282,8 @@ travels, so all players see the same game. It is meant for a LAN, a direct
 connection or a VPN; there is no matchmaking or internet relay.
 
 1. Every player needs the **same build**: copy the whole `build\Release`
-   folder to the other PCs (the join check compares the exe). Each player
+   folder to the other PCs (the join check compares the build: both repos'
+   commits and the generated code, and the game's `default.xbe`). Each player
    needs their own game files: a `game_files` folder next to the copied exe
    is simplest (see "Extracting the game files" above).
 2. The host opens the menu (Escape) > Network, chooses **Host a game**, sets

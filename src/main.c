@@ -66,6 +66,9 @@
 #ifndef XBOXRECOMP_GIT_SHA
 #define XBOXRECOMP_GIT_SHA "unknown"
 #endif
+#ifndef RECOMP_GEN_HASH
+#define RECOMP_GEN_HASH "none"
+#endif
 
 /* The guest-CPU schedule (xboxrecomp kernel/sched.c). */
 extern int  xbox_SchedMode(void);
@@ -1473,6 +1476,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * peer must run alike (virtual mode, one pad per player, software
      * rendering for what the guest reads back) before anything reads those
      * settings (xboxrecomp src/net). */
+    xbox_NetplaySetBuild("blinx2 " BLINX2_GIT_SHA " xboxrecomp " XBOXRECOMP_GIT_SHA
+                         " gen " RECOMP_GEN_HASH);
     xbox_NetplayStart(BLINX_2_DIR);
     if (!load_xbe(BLINX_2_XBE_PATH, &xbe_data, &xbe_size)) {
         char msg[MAX_PATH + 256];

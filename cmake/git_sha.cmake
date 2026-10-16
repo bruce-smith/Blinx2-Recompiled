@@ -4,7 +4,10 @@
 # without a reconfigure. "+dirty" marks tracked changes not committed. The
 # file is only rewritten when its text changes, so an unchanged tree does not
 # recompile anything.
-#   cmake -DOUT=<header> -DSRC=<blinx2-recomp dir> -DGIT=<git> -P git_sha.cmake
+# RECOMP_GEN_HASH: the generated C (gitignored, so no commit names it) as a
+# hash of every file's hash; a network game's join check compares it.
+#   cmake -DOUT=<header> -DSRC=<blinx2-recomp dir> -DGIT=<git> [-DGEN=<gen dir>]
+#         -P git_sha.cmake
 
 function(sha_of dir var)
     set(sha "unknown")
@@ -28,7 +31,22 @@ endfunction()
 
 sha_of("${SRC}" blinx2)
 sha_of("${SRC}/../xboxrecomp" xboxrecomp)
-set(text "/* Generated on every build by cmake/git_sha.cmake. */\n#define BLINX2_GIT_SHA \"${blinx2}\"\n#define XBOXRECOMP_GIT_SHA \"${xboxrecomp}\"\n")
+set(gen "none")
+if(GEN)
+    file(GLOB gen_files "${GEN}/*.c" "${GEN}/*.h")
+    list(SORT gen_files)
+    set(all "")
+    foreach(f IN LISTS gen_files)
+        file(SHA1 "${f}" fh)
+        get_filename_component(fn "${f}" NAME)
+        string(APPEND all "${fn}:${fh};")
+    endforeach()
+    if(all)
+        string(SHA1 gen "${all}")
+        string(SUBSTRING "${gen}" 0 12 gen)
+    endif()
+endif()
+set(text "/* Generated on every build by cmake/git_sha.cmake. */\n#define BLINX2_GIT_SHA \"${blinx2}\"\n#define XBOXRECOMP_GIT_SHA \"${xboxrecomp}\"\n#define RECOMP_GEN_HASH \"${gen}\"\n")
 set(old "")
 if(EXISTS "${OUT}")
     file(READ "${OUT}" old)
