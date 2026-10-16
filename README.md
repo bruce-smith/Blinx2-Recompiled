@@ -369,12 +369,49 @@ stage or character: `tools\ninja\README.md`.
 
 ## Linux and Steam Deck
 
-The game builds and runs on x86-64 Linux as well (SteamOS is a target, not yet tried). The
-recompiled C and the toolkit are the same; the host side uses SDL2 for the
-window, keyboard, pads and sound. Status: it runs headless (intro movies,
-title, the stage 01-01 attract demo at 30 fps in the software renderer);
-the window, pad, sound and the Vulkan renderer have not yet
-been tried on a real Linux desktop or a Deck.
+The game builds and runs on x86-64 Linux as well. The recompiled C and the
+toolkit are the same; the host side uses SDL2 for the window, keyboard, pads
+and sound, and the Vulkan renderer gets its surface from SDL2.
+
+**Status.** Everything below was tried on this project's development PC,
+under WSL2 (Ubuntu 26.04, gcc 15, WSLg for the display) and in an Ubuntu
+24.04 container (gcc 13, clang 18). No real Linux desktop and no Steam Deck
+yet.
+
+Works:
+
+- Building with gcc and clang; the game boots, plays the movies and the
+  title, and plays stages.
+- Window, keyboard, Alt+Enter/F11 full screen, F9, the Escape menu, sound,
+  saves and the Z: cache.
+- The software renderer (same pictures as on Windows). Vulkan presentation
+  (`RECOMP_VK_PRESENT=1`) through Mesa's CPU driver.
+- Input recording and exact replays, on Linux and across systems: a
+  recording made on Windows replays on Linux with identical game memory,
+  with one pad or several, when it was recorded with
+  `RECOMP_PORTABLE_MATH=1` (the transcendental functions then give the same
+  bits under every compiler; without it Windows and Linux differ in the last
+  bit of a few results).
+- Speed under WSL2, software renderer: 15-25 fps at the start of a stage
+  without a window, about 12 fps in a WSLg window. A native install should do
+  better.
+
+Not tried yet:
+
+- A real gamepad (WSL has no USB). The mapping is the XInput one, through
+  SDL2's game controller layer.
+- The Vulkan renderer on a real GPU driver (Mesa RADV on the Deck, NVIDIA,
+  Intel). On Mesa's CPU driver (llvmpipe) it lost the device in stage 01-01
+  and the game went on in software.
+- The Steam Deck, SteamOS, gamescope, and Wayland.
+- A recording made on Linux replayed on Windows.
+- Network play between Linux and Windows: being tested. Joining works and
+  both machines boot the same way step for step (the deterministic boot
+  network play uses gives identical game memory on both); a whole game has
+  not yet been played.
+
+Keep the game files on a Linux file system: under WSL, reading them from the
+Windows drive (`/mnt/c`, `/mnt/e`) is slow enough to stall loading screens.
 
 **Build natively** (Ubuntu/Debian package names; the generated C must be in
 `src/recomp/gen`, see above -- the Python pipeline runs on Linux too, with
@@ -411,7 +448,6 @@ Differences from Windows:
 - `RECOMP_VK_PRESENT=1` (Vulkan swapchain presentation) works as on Windows.
   A CPU-only Vulkan driver (Mesa llvmpipe, e.g. under WSLg) is used only when
   named: `RECOMP_VK_DEVICE=llvmpipe`.
-- Not yet on Linux: the in-game menu (Escape).
 
 ## Troubleshooting
 
