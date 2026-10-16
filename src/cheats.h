@@ -54,6 +54,16 @@ int         cheats_item_owned(int team, int i);   /* -1 if no save loaded */
 void        cheats_give_item(int team, int i);
 void        cheats_give_all_items(int team);
 
+/* Time controls (Time Sweepers): fill every control type the character can
+ * hold to its cap, once or kept full. */
+void cheats_fill_time_controls(void);
+void cheats_set_infinite_time_controls(int on);
+int  cheats_infinite_time_controls(void);
+
+/* Spawn an in-level pickup (item type byte, see notes-cheats.md) just in
+ * front of the human player; sub is the type's variant (0 if unsure). */
+void cheats_spawn_pickup(int type, int sub);
+
 /* Stage warp. The list is the game's own stage table; warping uses the
  * game's own stage-change routine, as the hub does when a mission starts. */
 int         cheats_stage_count(void);

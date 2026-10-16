@@ -83,7 +83,7 @@ static int team_now(void)
  * little-endian arguments. The UI fills the queue; the game thread drains
  * it at the poll, applies each and records it. */
 
-enum { OP_NONE, OP_MONEY, OP_INVINCIBLE, OP_WARP, OP_FREECAM, OP_CAMPOSE, OP_ITEM, OP_AMMO };
+enum { OP_NONE, OP_MONEY, OP_INVINCIBLE, OP_WARP, OP_FREECAM, OP_CAMPOSE, OP_ITEM, OP_AMMO, OP_SPAWN, OP_TIMECTRL };
 
 typedef struct { uint8_t b[22]; } Req;
 #define QLEN 32
@@ -136,8 +136,8 @@ static void req(uint8_t op, int32_t a, int32_t b)
 
 /* ── State the game thread owns ──────────────────────────────────────── */
 
-static volatile int s_invincible, s_ammo;
-static volatile int s_ui_ammo;
+static volatile int s_invincible, s_ammo, s_tc_hold;
+static volatile int s_ui_ammo, s_ui_tc_hold;
 static volatile int s_freecam, s_freecam_freeze;
 static volatile int s_ui_invincible, s_ui_freecam;   /* what the UI asked for */
 
@@ -310,23 +310,33 @@ int cheats_warp_stage(int i)
 
 /* Call a lifted function from here, on the game thread, as if the game had:
  * registers and the x87 stack come back as they were. */
-static void guest_call(void (*fn)(void), uint32_t edi, uint32_t arg)
+static uint32_t guest_call_n(void (*fn)(void), uint32_t edi, const uint32_t *args,
+                             int nargs)
 {
     uint32_t ra = g_eax, rc = g_ecx, rd = g_edx, rb = g_ebx, rs = g_esi,
-             rdi = g_edi, rbp = g_ebp, sp = g_esp;
-    int top = g_fp_top;
+             rdi = g_edi, rbp = g_ebp, sp = g_esp, ret;
+    int top = g_fp_top, k;
     double fp[8];
     memcpy(fp, g_fp_stack, sizeof fp);
     g_edi = edi;
-    g_esp -= 4;
-    M32(g_esp) = arg;
+    for (k = nargs - 1; k >= 0; k--) {  /* cdecl: last argument first */
+        g_esp -= 4;
+        M32(g_esp) = args[k];
+    }
     g_esp -= 4;
     M32(g_esp) = 0;                 /* return address: nobody looks */
     fn();                           /* pops its return address */
+    ret = g_eax;
     g_eax = ra; g_ecx = rc; g_edx = rd; g_ebx = rb; g_esi = rs;
     g_edi = rdi; g_ebp = rbp; g_esp = sp;
     g_fp_top = top;
     memcpy(g_fp_stack, fp, sizeof fp);
+    return ret;
+}
+
+static void guest_call(void (*fn)(void), uint32_t edi, uint32_t arg)
+{
+    guest_call_n(fn, edi, &arg, 1);
 }
 
 static int apply_warp(int i)
@@ -468,6 +478,120 @@ static int apply_item(int team, int i)
     return 1;
 }
 
+/* ── Time controls ──
+ *
+ * A Sweeper earns time controls by vacuuming time crystals (item types
+ * 0x2A-0x35, sub_0008BFD0): three of a colour give one control of that
+ * colour's type. Per team, the state is a block at 0xADCA58 + team*0x5DC
+ * (team = actor index / 4); for the character in slot s (actor byte +0x41):
+ * crystals towards the next control +12 + s*6 + colour, the stock of
+ * control type t (1-6) +0xAE + s*8 + t, and its cap +0xC6 + s*8 + t (0 for a
+ * type the character cannot hold). Filling sets each stock to its cap. */
+#define TC_BLOCK      0x00ADCA58u
+#define TC_BLOCK_SIZE 0x5DCu
+#define A_SLOT        0x41u
+
+static int tc_fill(void)
+{
+    uint32_t i, t;
+    int n = 0;
+    if (!cheats_in_game())
+        return 0;
+    for (i = 0; i < ACTOR_COUNT; i++) {
+        uint32_t a = ACTORS + i * ACTOR_SIZE, b;
+        uint8_t slot = M8(a + A_SLOT);
+        if (M8(a + A_CPU) != 0 || M8(a + A_SIDE) != 0 || slot > 3)
+            continue;
+        b = TC_BLOCK + (i / 4) * TC_BLOCK_SIZE + slot * 8u;
+        for (t = 1; t <= 6; t++) {
+            uint8_t cap = M8(b + 0xC6 + t);
+            if (cap && M8(b + 0xAE + t) < cap) {
+                M8(b + 0xAE + t) = cap;
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+void cheats_fill_time_controls(void)
+{
+    req(OP_TIMECTRL, 1, 0);
+}
+
+void cheats_set_infinite_time_controls(int on)
+{
+    s_ui_tc_hold = on != 0;
+    req(OP_TIMECTRL, 2, on != 0);
+}
+
+int cheats_infinite_time_controls(void)
+{
+    return input_rec_mode() == 2 ? s_tc_hold : s_ui_tc_hold;
+}
+
+/* ── Pickups ──
+ *
+ * In-level pickups (crystals, gold, food, ammo...) live in a pool of 256
+ * objects of 0x6C bytes at 0xB22E68 (ring cursor [0xB2A738], live count
+ * [0xB5C918]). sub_000794D0(pos *, vec *, type, sub) -- cdecl, 125 callers
+ * (enemy drops, boxes, the stage loader) -- takes a free one, fills it in
+ * for item type `type` (byte +2) and returns it, or 0 when the pool is full.
+ * The cheat calls it as the game does, 20 units in front of the human player
+ * (actor facing +0x108) and a little above the ground. */
+extern void sub_000794D0(void);
+#define A_POS 0xECu                 /* actor position, 3 floats */
+#define A_YAW 0x108u                /* facing: forward = (-sin, 0, -cos) */
+
+static int apply_spawn(int type, int sub)
+{
+    uint32_t sp, pos, args[4], obj;
+    float p[3], yaw;
+    if (!cheats_in_game() || type < 0 || type > 0xFF)
+        return 0;
+    yaw = MF(ACTORS + A_YAW);
+    p[0] = MF(ACTORS + A_POS) - sinf(yaw) * 20.0f;
+    p[1] = MF(ACTORS + A_POS + 4) + 5.0f;
+    p[2] = MF(ACTORS + A_POS + 8) - cosf(yaw) * 20.0f;
+    /* the position goes on the guest stack, below what guest_call_n uses */
+    sp = (g_esp - 0x40) & ~0xFu;
+    pos = sp;
+    memcpy((void *)((uintptr_t)pos + g_xbox_mem_offset), p, sizeof p);
+    {
+        uint32_t saved = g_esp;
+        g_esp = sp;
+        args[0] = pos;
+        args[1] = 0;                /* no velocity */
+        args[2] = (uint32_t)type;
+        args[3] = (uint32_t)sub;
+        obj = guest_call_n(sub_000794D0, g_edi, args, 4);
+        g_esp = saved;
+    }
+    fprintf(stderr, "  [CHEAT] spawn pickup type 0x%02X sub %d at (%.1f, %.1f, %.1f): %s\n",
+            type, sub, p[0], p[1], p[2], obj ? "spawned" : "pool full");
+    return 1;
+}
+
+/* The menu's list: only types seen to work, spawning each type 0x1C-0x5F in
+ * front of Tango in stage 1-1 (2026-10-15). 0x1C-0x21 are junk a Time Sweeper
+ * vacuums and shoots (crate, gas cylinders, gears and tyres, car, barrel),
+ * 0x26 a bomb (explodes, left out), 0x36 a gold coin (+10 G when touched),
+ * 0x53-0x5F wooden item boxes. The definition table (0x400550 + type*0x38:
+ * +4 value, +0x10 model) also names 0x29-0x34 time-crystal stones (they
+ * are earned by vacuuming; spawned this way none showed up), 0x41-0x4C
+ * medals and 0x4F a key (mission progress, left out). */
+static const struct { uint8_t type; const char *name; } s_pickups[] = {
+    { 0x36, "Gold coin (10 G)" }, { 0x1C, "Junk: wooden crate" },
+    { 0x1D, "Junk: gas cylinder" }, { 0x1F, "Junk: gears and tyres" },
+    { 0x20, "Junk: car" }, { 0x21, "Junk: barrel" }, { 0x5C, "Item box" },
+};
+#define N_PICKUPS ((int)(sizeof s_pickups / sizeof s_pickups[0]))
+
+void cheats_spawn_pickup(int type, int sub)
+{
+    req(OP_SPAWN, type, sub);
+}
+
 /* ── Free camera ── */
 
 void cheats_freecam_enable(int on, int freeze_player)
@@ -596,6 +720,26 @@ static void menu_draw(void *ctx)
     v = cheats_infinite_ammo();
     if (xbox_ui_checkbox("Infinite ammo (Tom-Tom weapons)", &v))
         cheats_set_infinite_ammo(v);
+    if (xbox_ui_button("Fill time controls"))
+        cheats_fill_time_controls();
+    xbox_ui_same_line();
+    v = cheats_infinite_time_controls();
+    if (xbox_ui_checkbox("Infinite time controls (Time Sweepers)", &v))
+        cheats_set_infinite_time_controls(v);
+
+    xbox_ui_separator();
+    {
+        static int pick = 0;
+        static const char *pnames[N_PICKUPS];
+        if (!pnames[0]) {
+            int i;
+            for (i = 0; i < N_PICKUPS; i++)
+                pnames[i] = s_pickups[i].name;
+        }
+        xbox_ui_combo("Pickup", &pick, pnames, N_PICKUPS);
+        if (xbox_ui_button("Spawn pickup in front of you"))
+            cheats_spawn_pickup(s_pickups[pick].type, 0);
+    }
 
     xbox_ui_separator();
     v = cheats_freecam_enabled();
@@ -722,6 +866,16 @@ static int apply(const Req *r)
         fprintf(stderr, "  [CHEAT] free camera %s%s\n", a ? "on" : "off",
                 a && b ? " (player frozen)" : "");
         return 1;
+    case OP_TIMECTRL:
+        if (a == 2) {               /* hold full */
+            s_tc_hold = b != 0;
+            fprintf(stderr, "  [CHEAT] infinite time controls %s\n", b ? "on" : "off");
+            return 1;
+        }
+        fprintf(stderr, "  [CHEAT] time controls filled (%d)\n", tc_fill());
+        return 1;
+    case OP_SPAWN:
+        return apply_spawn(a, b);
     case OP_AMMO:
         s_ammo = a != 0;
         fprintf(stderr, "  [CHEAT] infinite ammo %s\n", a ? "on" : "off");
@@ -752,20 +906,20 @@ void cheats_replay_event(const uint8_t *data)
 static void script_poll(uint32_t poll)
 {
     static int n = -1, next;
-    static struct { uint32_t poll; Req r; } sc[32];
+    static struct { uint32_t poll; Req r; } sc[128];
     if (n < 0) {
         const char *s = getenv("RECOMP_CHEAT_SCRIPT");
         n = 0;
-        while (s && *s && n < 32) {
+        while (s && *s && n < 128) {
             static const char *const ops[] = { "", "money", "invincible", "warp", "freecam",
-                                                "campose", "item", "ammo" };
+                                                "campose", "item", "ammo", "spawn", "timectrl" };
             char *e;
             int32_t a = 0, b = 0;
             uint8_t op = 0, k;
             sc[n].poll = (uint32_t)strtoul(s, &e, 0);
             if (*e++ != ':')
                 break;
-            for (k = 1; k < 8; k++)
+            for (k = 1; k < 10; k++)
                 if (!strncmp(e, ops[k], strlen(ops[k]))) {
                     op = k;
                     e += strlen(ops[k]);
@@ -818,4 +972,6 @@ void cheats_on_poll(uint32_t poll)
     }
     invincible_tick();
     ammo_tick();
+    if (s_tc_hold)
+        tc_fill();
 }
