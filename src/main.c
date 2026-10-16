@@ -1290,6 +1290,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 #endif
     }
 
+#if defined(_WIN32)
+    /* Restarted into a network game by the menu (RECOMP_NET_PARENT, the old
+     * process's id): let it finish dying first. It still held
+     * blinx2_recomp.log, so the rotation and the reopen below failed and the
+     * network game ran with no log. */
+    {
+        const char *pp = getenv("RECOMP_NET_PARENT");
+        if (pp && *pp) {
+            HANDLE ph = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)strtoul(pp, NULL, 10));
+            if (ph) {
+                WaitForSingleObject(ph, 5000);
+                CloseHandle(ph);
+            }
+        }
+    }
+#endif
+
     /* Keep the last runs' logs: a crash log used to be overwritten by the
      * next launch, before anyone had read it. */
     rotate_rec(5);                    /* first: it reads the log's timestamp */
