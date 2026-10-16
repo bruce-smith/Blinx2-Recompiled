@@ -323,5 +323,10 @@
     "start": "0x0034309A",
     "observed": false,
     "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
+  },
+  {
+    "start": "0x003497E0",
+    "observed": true,
+    "note": "Indirect-call target observed in the hub's locker room (the human's 2026-10-15 17:31 recording: '[ICALL] Failed to resolve VA 0x003497E0' every frame of the character select; neither selecting nor backing out works). SRCADV callback listed in the DATADV table at 0x0112E510, beside the seeded 0x0034DBD0 (0x0112E524); starts after int3 padding and decodes to a ret."
   }
 ]
