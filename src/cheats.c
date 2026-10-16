@@ -273,7 +273,12 @@ static void ammo_tick(void)
 /* ── Stage warp ──
  *
  * The game's stage table (debug names at 0x3F15C0) with the play type its
- * stage-select sets for each (sub_000133E0 at 0x156BF). */
+ * stage-select sets for each (sub_000133E0 at 0x156BF), limited to stages
+ * the disc has data for: stgWWSS archives in lng_us.iph / media.iph exist
+ * for worlds 1-5 (stages 1, 3, 4), 0601, 0604, 0901, 0903, 1101 and 1201.
+ * The debug table also names "Last round boss" (index 43, stg0904) and
+ * "R09S02" (45, stg1001), which have no data: warping there hung on the
+ * loading screen. */
 typedef struct { const char *name; uint8_t idx, type; } Stage;
 static const Stage s_stages[] = {
     { "1-1/1-2 Time Sweeper",      0, 0 }, { "1-3 Tom-Tom Gang",  2, 1 },
@@ -288,7 +293,6 @@ static const Stage s_stages[] = {
     { "5-4 Boss 5",               23, 0 }, { "5-4 VS",           23, 1 },
     { "6-1 Inside Boss 5",        25, 1 }, { "6-4 Last Boss",    28, 0 },
     { "Bonus round (Sweeper)",    40, 0 }, { "Bonus round (Tom-Tom)", 42, 1 },
-    { "Last round boss",          43, 0 }, { "R09S02",           45, 0 },
     { "Time Factory (Sweeper hub)", 50, 0 }, { "Tom-Tom Base (Tom-Tom hub)", 55, 1 },
 };
 #define N_STAGES ((int)(sizeof s_stages / sizeof s_stages[0]))
