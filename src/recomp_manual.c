@@ -137,13 +137,14 @@ static void perf_line(long ms, uint32_t vbl, uint32_t frames, uint32_t peak,
 {
     extern void nv2a_pb_exec_perf(double *, double *, double *);
     extern void nv2a_pb_exec_counts(uint32_t *, uint64_t *);
+    extern uint32_t nv2a_pb_exec_flips(void);
     extern const char *xbox_LastAsset(void);
     static int on = -1;
     static long total;
-    static uint32_t draws0;
+    static uint32_t draws0, flips0;
     static uint64_t px0;
     double idle, blocked, wait;
-    uint32_t draws, f = frames ? frames : 1;
+    uint32_t draws, f, flips = nv2a_pb_exec_flips();
     uint64_t px;
 
     if (on < 0) {
@@ -152,6 +153,16 @@ static void perf_line(long ms, uint32_t vbl, uint32_t frames, uint32_t peak,
     }
     if (!on)
         return;
+    /* Frames: the executor's presents when it runs. The vblank counter's
+     * drops (`frames`) miss every frame at a 1-vblank interval (shops,
+     * menus): the main loop zeroes the counter before the next vblank
+     * reads it, so a 60 fps shop showed as 0 fps and a second's draws as
+     * one frame's. */
+    if (flips != flips0) {
+        frames = flips - flips0;
+        flips0 = flips;
+    }
+    f = frames ? frames : 1;
     total += ms;
     nv2a_pb_exec_perf(&idle, &blocked, &wait);
     nv2a_pb_exec_counts(&draws, &px);
