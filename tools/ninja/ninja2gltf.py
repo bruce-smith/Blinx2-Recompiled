@@ -332,37 +332,47 @@ def euler_quat(ang, zxy):
 
 
 def node_matrix(o, extra=None):
-    """4x4 local matrix of an NJS_OBJECT: T * R * S (S times extra, if given)."""
+    """4x4 local matrix of an NJS_OBJECT: T * R * S. extra: (scale, offset)
+    from the body-shape sliders."""
     x, y, z, w = euler_quat(o["ang"], o["flags"] & 0x20)
     r = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
                   [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
                   [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
     m = np.eye(4)
-    m[:3, :3] = r * (np.array(o["scl"]) * (extra if extra is not None else 1.0))
-    m[:3, 3] = o["pos"]
+    sc, mv = extra if extra is not None else (1.0, 0.0)
+    m[:3, :3] = r * (np.array(o["scl"]) * sc)
+    m[:3, 3] = np.array(o["pos"]) + mv
     return m
 
 
 # The body-shape sliders, as measured in the running game (character data
 # +0x54.. poked to +-50 one at a time, bone matrices compared): each scales
-# its bone by 1 + value/100 on the given local axes. Same bone numbering in
-# the Sweeper and the Tom-Tom trees. The other sliders change no bone
-# transform (still being measured).
-SLIDER_BONES = {0x55: ((74, 78), (1, 0, 0)),     # ear: ear length
-                0x5D: ((58,), (0, 1, 1)),        # head
-                0x63: ((48,), (0, 1, 1))}        # collar
+# its bone by 1 + value/100 on the given local axes, or moves it by
+# 0.02 * value along them. Same bone numbering in the Sweeper and the
+# Tom-Tom trees. Chest, waist, hip, leg, foot, arm, tails, shoulder and braid
+# changed no bone transform in a stage.
+SLIDER_BONES = {0x55: ((74, 78), (1, 0, 0), "scale"),    # ear: ear length
+                0x5D: ((58,), (0, 1, 1), "scale"),       # head
+                0x63: ((48,), (0, 1, 1), "scale"),       # collar
+                0x61: ((13,), (0, 1, 0), "move"),        # body length
+                0x62: ((120, 135), (1, 0, 0), "move")}   # leg length
 
 
 def slider_scales(data):
-    """character data {offset: byte} -> {bone: (sx, sy, sz)}."""
+    """character data {offset: byte} -> {bone: (scale[3], offset[3])}."""
     out = {}
-    for off, (bones, axes) in SLIDER_BONES.items():
+    for off, (bones, axes, kind) in SLIDER_BONES.items():
         v = struct.unpack("b", bytes([data.get(off, 0)]))[0]
-        if v:
-            f = 1.0 + v / 100.0
-            for b in bones:
-                cur = out.get(b, np.ones(3))
-                out[b] = cur * np.where(np.array(axes) > 0, f, 1.0)
+        if not v:
+            continue
+        ax = np.array(axes, float)
+        for b in bones:
+            sc, mv = out.get(b, (np.ones(3), np.zeros(3)))
+            if kind == "scale":
+                sc = sc * np.where(ax > 0, 1.0 + v / 100.0, 1.0)
+            else:
+                mv = mv + ax * 0.02 * v
+            out[b] = (sc, mv)
     return out
 
 
@@ -835,9 +845,9 @@ def main(argv=None):
         first = len(g.j["nodes"])
         for k, (o, parent, _w) in enumerate(nodes):
             g.j["nodes"].append({"name": "bone%03d_%08X" % (k, o["addr"]),
-                                 "translation": list(o["pos"]),
+                                 "translation": (np.array(o["pos"]) + extra.get(k, (1.0, 0.0))[1]).tolist(),
                                  "rotation": euler_quat(o["ang"], o["flags"] & 0x20),
-                                 "scale": (np.array(o["scl"]) * extra.get(k, 1.0)).tolist()})
+                                 "scale": (np.array(o["scl"]) * extra.get(k, (1.0, 0.0))[0]).tolist()})
             kids = root["children"] if parent < 0 else                 g.j["nodes"][first + parent].setdefault("children", [])
             kids.append(first + k)
         ibm = np.array([np.linalg.inv(flip @ w).T for _o, _p, w in nodes], np.float32)
@@ -859,6 +869,10 @@ def main(argv=None):
                         if kind not in keys:
                             continue
                         vals = [sample_keys(keys[kind], f, kind == "ang") for f in frames]
+                        if k in extra and kind == "pos":         # body-shape sliders
+                            vals = [v + extra[k][1] for v in vals]
+                        elif k in extra and kind == "scl":
+                            vals = [v * extra[k][0] for v in vals]
                         if kind == "ang":
                             vals = [euler_quat(v, o["flags"] & 0x20) for v in vals]
                             for i in range(1, len(vals)):     # keep one hemisphere

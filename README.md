@@ -299,8 +299,8 @@ It needs Python 3 with numpy and Pillow, and takes about ten minutes. Output:
   carries the game's 298 motions as animations.
 - `presets\`: the character editor's 45 stock characters, rigged.
 
-Not exported yet: most of the editor's body-shape sliders (ear, head and
-collar are applied; the rest keep the default proportions), and the meshes of the placed objects (only their
+Not exported yet: the thigh slider (the other body-shape sliders that
+change the body in the game are applied), and the meshes of the placed objects (only their
 markers). The tool behind it and all its options, for example a single
 stage or character: `tools\ninja\README.md`.
 
