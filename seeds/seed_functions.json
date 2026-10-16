@@ -328,5 +328,10 @@
     "start": "0x003497E0",
     "observed": true,
     "note": "Indirect-call target observed in the hub's locker room (the human's 2026-10-15 17:31 recording: '[ICALL] Failed to resolve VA 0x003497E0' every frame of the character select; neither selecting nor backing out works). SRCADV callback listed in the DATADV table at 0x0112E510, beside the seeded 0x0034DBD0 (0x0112E524); starts after int3 padding and decodes to a ret."
+  },
+  {
+    "start": "0x0034BEC0",
+    "observed": true,
+    "note": "SRCADV locker-room callback for screen 3 (Equip Team): entry 3 of the DATADV callback table at 0x0112E510, which sub_00348F10 calls each frame as table[[0x658090]]. The disassembler had it inside sub_0034B980 (0x0034B980-0x0034D3A1), so it was never in the dispatch table and opening Equip Team would fail to resolve every frame (the same way 0x003497E0 broke character select). Verified 2026-10-16 with the human's 17:31 recording: Character Menu -> Equip Team -> back -> character select -> hub all work."
   }
 ]
