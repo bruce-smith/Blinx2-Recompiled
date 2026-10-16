@@ -335,6 +335,35 @@ Without the menu: `RECOMP_NET=host:27350` or
 `RECOMP_NET=join:<host ip>:27350`, with `RECOMP_NET_PLAYERS=<2-4>`,
 `RECOMP_NET_DELAY=<frames>` and `RECOMP_NET_VK=1` (Vulkan display).
 
+### Cheats
+
+Open the menu (Escape) > **Cheats**. Nothing changes until you use a cheat.
+Most cheats act once a save is loaded or you are in a stage or hub; the tab
+says when one has to wait.
+
+- **Money:** give an amount, or the maximum (99,999 G), to the Time
+  Sweepers or the Tom-Tom Gang.
+- **Invincible:** no damage, health kept full.
+- **Infinite ammo:** the Tom-Tom Gang's weapons.
+- **Time controls:** fill them now, or keep them full (Time Sweepers).
+- **Spawn pickup:** puts the chosen pickup in front of you.
+- **Free camera:** fly the camera (left stick moves, right stick looks,
+  LT/RT down/up, hold A for speed; keyboard: numpad, I/J/K/L, 1/3, Z),
+  optionally with the player frozen.
+- **Items:** give one shop/locker item, or every item, to the team chosen
+  above.
+- **Warp to stage:** any stage the disc has, both hubs included, with the
+  game's own stage change (progress not yet saved in the current stage is
+  lost).
+
+Cheats are part of a run's input: a recording (`record_blinx2.bat`) keeps
+every cheat used, and its replay applies them at the same moment. During a
+replay the tab is read-only.
+
+In a network game a cheat applies in every player's game at the same frame,
+a few frames after it is used, so the games stay in step. The free camera is
+off there, because it steers from one player's input only.
+
 ## Exporting stages and characters (glTF)
 
 `export_assets.bat` exports the game's stages and characters as glTF 2.0
