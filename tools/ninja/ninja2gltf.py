@@ -349,11 +349,12 @@ def node_matrix(o, extra=None):
 # +0x54.. poked to +-50 one at a time, bone matrices compared): each scales
 # its bone by 1 + value/100 on the given local axes, or moves it along the
 # given vector times value. Same bone numbering in the Sweeper and the
-# Tom-Tom trees. Chest, waist, hip, leg, foot, arm, tails and braid changed
-# no bone transform in a stage.
+# Tom-Tom trees. Checked at +-20/40/50 where unclear. Dirt, chest, waist,
+# hip, thigh, leg, foot, arm, tails, whiskers and braid changed no bone
+# transform in a stage.
 SLIDER_BONES = {0x55: [((74, 78), (1, 0, 0), "scale")],          # ear: ear length
                 0x5D: [((58,), (0, 1, 1), "scale")],             # head
-                0x63: [((48,), (0, 1, 1), "scale")],             # collar
+                0x63: [((48,), (1, 1, 1), "scale")],             # collar
                 0x61: [((13,), (0, 0.02, 0), "move")],           # body length
                 0x62: [((120, 135), (0.02, 0, 0), "move")],      # leg length
                 0x60: [((15,), (0, 0, -0.01), "move"),           # shoulder width
