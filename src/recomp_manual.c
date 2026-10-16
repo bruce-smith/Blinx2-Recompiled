@@ -37,10 +37,14 @@ __declspec(dllimport) unsigned long long __stdcall GetTickCount64(void);
 #define RECOMP_MANUAL_TLS __thread
 #endif
 extern void xbox_SetVblankGate(int (*gate)(int due));
-/* A replay of a recorded guest-CPU schedule (xboxrecomp kernel/sched.c)
- * reproduces everything the v2 events below do, and their waits would hold
- * the guest CPU: they stand down for it. */
-extern int xbox_SchedReplaying(void);
+/* Under any guest-CPU schedule (xboxrecomp kernel/sched.c: recording,
+ * replaying or virtual) the v2 events below stand down and the input file
+ * supplies only input. A replayed schedule reproduces what they do, and
+ * their waits would hold the guest CPU. While a schedule is RECORDING they
+ * must be off too: forced from the input file, the schedule never saw those
+ * decisions, its replay took them from host time instead, and a converted
+ * recording diverged at boot (P13, 2026-10-16). */
+extern int xbox_SchedMode(void);
 extern void xbox_VblankKick(void);
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
@@ -470,12 +474,12 @@ static void input_rec_open(void)
                     memcpy(&s_ev_dev[s_ev_dev_n++], s_rp[i].state, sizeof(DevChg));
             {   /* RECOMP_REPLAY_THREADS=0: thread completions as they come */
                 const char *g = getenv("RECOMP_REPLAY_THREADS");
-                if ((g && *g == '0') || xbox_SchedReplaying())
+                if ((g && *g == '0') || xbox_SchedMode())
                     s_ev_done_n = 0;
             }
             {   /* RECOMP_REPLAY_LOADING=0: leave the loading screens' lengths free */
                 const char *g = getenv("RECOMP_REPLAY_LOADING");
-                if ((g && *g == '0') || xbox_SchedReplaying())
+                if ((g && *g == '0') || xbox_SchedMode())
                     s_ev_load_n = 0;
             }
             fprintf(stderr, "  [REPLAY] version %u, %u loading screens recorded%s\n",
@@ -494,7 +498,7 @@ static void input_rec_open(void)
                     if (end > top)
                         top = end;
                 }
-            if (top && !(g && *g == '0') && !xbox_SchedReplaying()) {
+            if (top && !(g && *g == '0') && !xbox_SchedMode()) {
                 s_vb_at = (uint32_t *)calloc(top, sizeof(uint32_t));
                 for (i = 0; i < s_rp_n && s_vb_at; i++) {
                     const InputRec *r = &s_rp[i];
@@ -1208,7 +1212,7 @@ void sub_00367F0E(void)
     sub_00367F0E_gen();
     if (devgate < 0) {
         const char *g = getenv("RECOMP_REPLAY_DEVICES");
-        devgate = !(g && *g == '0') && !xbox_SchedReplaying();
+        devgate = !(g && *g == '0') && !xbox_SchedMode();
     }
     if (s_main_tid && (long)GetCurrentThreadId() == s_main_tid) {
         uint32_t n = s_dev_calls++;
