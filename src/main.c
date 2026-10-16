@@ -132,6 +132,46 @@ extern ptrdiff_t g_xbox_mem_offset;
  * them. Called once the working directory is the exe's own folder. */
 static char g_game_dir[MAX_PATH];
 static char g_xbe_path[MAX_PATH];
+static int s_headless;
+
+/* game_dir= under [paths] in blinx2_settings.ini. A headless run does not
+ * load the settings (the other options would change what a scripted run
+ * does), so it reads this one key from the file itself: a packaged build
+ * pointed at its game files then runs headless too. */
+static void settings_game_dir(char *out, size_t n)
+{
+    FILE *f;
+    char line[512], section[32] = "";
+    out[0] = 0;
+    if (!s_headless) {
+        xbox_setting_get_str("paths", "game_dir", "", out, n);
+        return;
+    }
+    if (!(f = fopen("blinx2_settings.ini", "r")))
+        return;
+    while (fgets(line, sizeof line, f)) {
+        char *p = line, *e;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        for (e = p + strlen(p); e > p && (e[-1] == '\n' || e[-1] == '\r'
+                                          || e[-1] == ' ' || e[-1] == '\t'); )
+            *--e = 0;
+        if (*p == '[') {
+            snprintf(section, sizeof section, "%.*s", (int)strcspn(p + 1, "]"), p + 1);
+        } else if (!strcmp(section, "paths") && !strncmp(p, "game_dir", 8)) {
+            p += 8;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            if (*p++ != '=')
+                continue;
+            while (*p == ' ' || *p == '\t')
+                p++;
+            snprintf(out, n, "%s", p);
+            break;
+        }
+    }
+    fclose(f);
+}
 
 #if !defined(_WIN32)
 /* The executable's folder; the working directory may be elsewhere (see the
@@ -144,7 +184,7 @@ static void resolve_game_dir(void)
     char next_to_exe[4096 + 32], ini[4096];
     size_t n;
 
-    xbox_setting_get_str("paths", "game_dir", "", ini, sizeof ini);
+    settings_game_dir(ini, sizeof ini);
     if (!(env && *env) && ini[0])
         env = ini;
 
@@ -166,7 +206,7 @@ static void resolve_game_dir(void)
     char *p, ini[MAX_PATH];
     size_t n;
 
-    xbox_setting_get_str("paths", "game_dir", "", ini, sizeof ini);
+    settings_game_dir(ini, sizeof ini);
     if (!(env && *env) && ini[0])
         env = ini;
 
@@ -1076,8 +1116,8 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-/* Set from RECOMP_HEADLESS in WinMain: no window, no dialogs. */
-static int s_headless;
+/* s_headless (declared above settings_game_dir) is set from RECOMP_HEADLESS
+ * in WinMain: no window, no dialogs. */
 
 extern void xbox_FramebufferWindowSetTitle(const uint16_t *name, int max_chars);
 
@@ -1389,7 +1429,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      *   RECOMP_USB        the emulated USB gamepad (host XInput pad)
      *   RECOMP_KEYBOARD   keys on top of it: arrows, Enter=Start, Z/X/A/S
      * Each is set only when unset. RECOMP_HEADLESS=1 leaves all four alone,
-     * for log-only and scripted runs. */
+     * for log-only and scripted runs. RECOMP_HEADLESS=0 means not headless:
+     * the variable is removed here, because the runtime's modules only ask
+     * whether it exists. (=0 turns RECOMP_FB_WINDOW off the same way.) */
+    {
+        const char *h = getenv("RECOMP_HEADLESS");
+        if (h && *h == '0') {
+#if defined(_WIN32)
+            _putenv_s("RECOMP_HEADLESS", "");
+#else
+            unsetenv("RECOMP_HEADLESS");
+#endif
+        }
+    }
     s_headless = getenv("RECOMP_HEADLESS") != NULL;
 
     /* Settings from blinx2_settings.ini next to the exe, edited in the
