@@ -3,6 +3,7 @@ build/
 build-linux/
 out/
 bin/
+dist/
 *.obj
 *.o
 *.lib
