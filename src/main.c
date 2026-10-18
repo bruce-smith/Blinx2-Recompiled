@@ -70,6 +70,15 @@
 #define RECOMP_GEN_HASH "none"
 #endif
 
+#if defined(_WIN32)
+/* On a laptop with two GPUs (NVIDIA Optimus, AMD switchable graphics), ask
+ * the driver for the fast one. The Vulkan backend prefers a discrete device
+ * where it can see one; these make sure the driver offers it and runs the
+ * window on it. */
+__declspec(dllexport) DWORD NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+#endif
+
 /* The guest-CPU schedule (xboxrecomp kernel/sched.c). */
 extern int  xbox_SchedMode(void);
 extern void xbox_SchedAddTick(void (*fn)(void));
