@@ -328,11 +328,15 @@ Things to know:
     processor works out only what the game itself reads back (depth and
     visibility), about twice as fast as Compatibility. A PC without usable
     Vulkan joins anyway and draws in software, which is slower.
+  - **Fastest**: for a slow PC. The graphics card draws and the processor
+    draws nothing. The game is told that everything is in view, so a few
+    things that should hide behind walls (light flares, a searchlight beam)
+    still show. A PC without usable Vulkan draws in software.
   - **Compatibility**: every PC draws the whole picture in software, as in
     the first version. Use it if Fast misbehaves. **Vulkan display (AA)**
     then lets Vulkan show the picture, smoothed, on your own screen only.
 
-  Either way every PC stays exactly in step. A slow PC sets the speed for
+  In every mode every PC stays exactly in step. A slow PC sets the speed for
   everyone, and an effect may hitch the first time it appears.
 - **If the games drift apart** (a desync), every game stops and says so,
   and writes next to its exe `netplay_report.txt` (what happened and at
