@@ -34,6 +34,12 @@ rem (2026-10-14) were all made in software.
 set "RECOMP_GPU=software"
 if exist "%REC%\game.log" findstr /C:"[GPU] renderer: vulkan" "%REC%\game.log" >nul && set "RECOMP_GPU=vulkan"
 echo Renderer: %RECOMP_GPU%
+rem Recordings made before xboxrecomp honoured MmAllocateContiguousMemoryEx's
+rem "highest" (their game.log names a block "above the caller's highest")
+rem replay exactly only with the old placement.
+set "RECOMP_CONTIG_RANGE="
+if exist "%REC%\game.log" findstr /C:"above the caller's highest" "%REC%\game.log" >nul && set "RECOMP_CONTIG_RANGE=0"
+if defined RECOMP_CONTIG_RANGE echo Contiguous memory: old placement (recording predates the fix)
 
 cd /d "%EXE_DIR%"
 if /i "%~2"=="window" (
