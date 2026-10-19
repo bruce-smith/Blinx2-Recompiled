@@ -49,6 +49,10 @@ Xbox disc of Blinx 2.
 
 ## Prerequisites
 
+Easiest setup on Windows: download `Blinx2Setup.exe` from
+https://github.com/bruce-smith/Blinx2-Launcher/releases/latest; it extracts
+your own ISO, installs the tools (asking first), clones, recompiles and builds.
+
 - Windows 10/11, x64.
 - Visual Studio 2022 with the "Desktop development with C++" workload (MSVC).
 - CMake 3.20 or newer (the one bundled with Visual Studio works).
