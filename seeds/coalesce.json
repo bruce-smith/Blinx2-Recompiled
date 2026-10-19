@@ -15,5 +15,15 @@
       "0x00044F48",
       "0x00044F76"
     ]
+  },
+  {
+    "start": "0x000DB790",
+    "end": "0x000DBE34",
+    "coalesce_starts": [
+      "0x000DBB9B"
+    ],
+    "internal_alias_starts": [
+      "0x000DBB9B"
+    ]
   }
 ]

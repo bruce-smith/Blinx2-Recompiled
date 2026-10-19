@@ -295,11 +295,6 @@
     "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
   },
   {
-    "start": "0x000DB806",
-    "observed": false,
-    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
-  },
-  {
     "start": "0x001DFD71",
     "observed": false,
     "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
