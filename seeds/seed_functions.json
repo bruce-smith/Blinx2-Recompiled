@@ -290,32 +290,7 @@
     "note": "Static blocker hunt (2026-10-14): function address taken (DATADV table 0x0112F668), not dispatchable; starts after a ret/padding and decodes to a ret. The shape of 0x000EF540/0x0016A870/0x000AEC20, found before the game reaches it."
   },
   {
-    "start": "0x000453A0",
-    "observed": false,
-    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
-  },
-  {
-    "start": "0x001DFD71",
-    "observed": false,
-    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
-  },
-  {
-    "start": "0x001E0040",
-    "observed": false,
-    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
-  },
-  {
     "start": "0x002D54FD",
-    "observed": false,
-    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
-  },
-  {
-    "start": "0x002E50B0",
-    "observed": false,
-    "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
-  },
-  {
-    "start": "0x0034309A",
     "observed": false,
     "note": "Static blocker hunt (2026-10-14): direct-call target that compiled to an unresolved stub; begins right after a ret/padding and decodes to a ret, so a real (often __finally/unwind) function rather than a mid-body entry."
   },
