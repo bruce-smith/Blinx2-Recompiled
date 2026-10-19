@@ -323,11 +323,17 @@ Things to know:
   bottom-left, 3 top-right, 4 bottom-right) and shows the whole picture
   while the game is not split. Auto applies to the plain window (Vulkan
   display shows the whole frame).
-- **Display:** by default the software renderer draws and shows the game,
-  which keeps every PC exactly in step. Menu > Network > **Vulkan display
-  (AA)** keeps the software renderer for everything the game reads back and
-  lets Vulkan show the picture, smoothed. It is not faster, and an effect
-  may hitch the first time it appears. It changes only your own screen.
+- **Rendering** (the host chooses, in the Network tab):
+  - **Fast** (default): the graphics card shows the game (Vulkan), and the
+    processor works out only what the game itself reads back (depth and
+    visibility), about twice as fast as Compatibility. A PC without usable
+    Vulkan joins anyway and draws in software, which is slower.
+  - **Compatibility**: every PC draws the whole picture in software, as in
+    the first version. Use it if Fast misbehaves. **Vulkan display (AA)**
+    then lets Vulkan show the picture, smoothed, on your own screen only.
+
+  Either way every PC stays exactly in step. A slow PC sets the speed for
+  everyone, and an effect may hitch the first time it appears.
 - **If the games drift apart** (a desync), every game stops and says so,
   and writes next to its exe `netplay_report.txt` (what happened and at
   which frame) plus `netplay_desync_f<frame>_p<player>.bin` (a hash of each
