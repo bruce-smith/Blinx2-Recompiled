@@ -1292,6 +1292,74 @@ void sub_00367F0E(void)
     }
 }
 
+/* Memory units (xboxrecomp kernel/kernel_mu.c): XAPI's XGetDevices,
+ * XMountMU and XUnmountMU, all stdcall. With a unit configured, the MU type
+ * (0x366B10) is answered by the runtime and a unit is a host folder, so the
+ * save module (0x001B7130-0x001B7D4F, e.g. Versus' Journey Bag) finds one
+ * in controller port 1. With none (RECOMP_MU=0, a recording made without
+ * one), the title's own code runs, as before. */
+#define XDEVICE_TYPE_MU 0x366B10u
+/* XAPI's mask of mounted memory-unit drives (bit = letter - 'F'), which
+ * XMountMU keeps and XMUNameFromDriveLetter (sub_0029894A) checks first:
+ * left clear, every name read failed and the save module's MU list kept an
+ * uninitialised name (drawn as a garbled band). */
+#define XAPI_MU_MOUNTED 0x4B71D4u
+extern void sub_00367EEC_gen(void);
+extern void sub_00367FDD_gen(void);
+extern void sub_0036810F_gen(void);
+extern int xbox_MuMask(void);
+extern uint32_t xbox_MuMount(uint32_t port, uint32_t slot, char *drive);
+extern uint32_t xbox_MuUnmount(uint32_t port, uint32_t slot);
+
+static uint32_t mu_arg(int i)
+{
+    return *(const uint32_t *)((uint8_t *)(uintptr_t)g_xbox_mem_offset + g_esp + 4 + 4 * i);
+}
+
+void sub_00367EEC(void)                  /* XGetDevices(type) */
+{
+    if (mu_arg(0) != XDEVICE_TYPE_MU || !xbox_MuMask()) {
+        sub_00367EEC_gen();
+        return;
+    }
+    g_eax = (uint32_t)xbox_MuMask();
+    g_esp += 8;
+}
+
+void sub_00367FDD(void)                  /* XMountMU(port, slot, PCHAR drive) */
+{
+    uint32_t pdrive = mu_arg(2);
+    char letter = 0;
+    if (!xbox_MuMask()) {
+        sub_00367FDD_gen();
+        return;
+    }
+    g_eax = xbox_MuMount(mu_arg(0), mu_arg(1), &letter);
+    if (g_eax == 0) {
+        uint8_t *mem = (uint8_t *)(uintptr_t)g_xbox_mem_offset;
+        if (pdrive)
+            mem[pdrive] = (uint8_t)letter;
+        *(uint32_t *)(mem + XAPI_MU_MOUNTED) |= 1u << (letter - 'F');
+    }
+    g_esp += 16;
+}
+
+void sub_0036810F(void)                  /* XUnmountMU(port, slot) */
+{
+    if (!xbox_MuMask()) {
+        sub_0036810F_gen();
+        return;
+    }
+    {
+        uint32_t port = mu_arg(0), slot = mu_arg(1);
+        g_eax = xbox_MuUnmount(port, slot);
+        if (g_eax == 0)
+            *(uint32_t *)((uint8_t *)(uintptr_t)g_xbox_mem_offset + XAPI_MU_MOUNTED)
+                &= ~(1u << (port * 2 + slot));
+    }
+    g_esp += 12;
+}
+
 /* D3D's NV2A interrupt routine (sub_002EA2E0), sampled. RECOMP_VBL_TRACE=1
  * prints the fields it gates the vblank work on, every 60th call. It showed
  * PMC_INTR_0 already zero when the ISR ran (the ack thread cleared it), which

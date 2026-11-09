@@ -208,6 +208,11 @@ filtering.
   `RECOMP_SAVE_DIR`, if set).
 - Cache (the game copies archives to its Z: drive):
   `%LOCALAPPDATA%\xboxrecomp`.
+- Memory unit (the Xbox memory card): a folder, `MU\0` in
+  `%LOCALAPPDATA%\xboxrecomp` (or in `RECOMP_SAVE_DIR`). The game sees it in
+  controller 1, slot A ("MU 1A"). Versus -> Prepare for Battle -> Create
+  Journey Bag and Return Journey Bag Data use it. `RECOMP_MU=0` removes it,
+  and `RECOMP_MU=1,2` puts one in controllers 1 and 2 (`MU\0`, `MU\2`).
 - Logs, next to the exe: `blinx2_recomp.log` (the game's log) and
   `xbox_kernel.log`. The previous five runs' logs are kept as
   `*.prev-<time>.log`. Attach them to bug reports.
@@ -231,6 +236,7 @@ Environment variables, set before starting the exe:
 |---|---|
 | `RECOMP_GAME_DIR=<dir>` | Folder with `default.xbe` and the archives. |
 | `RECOMP_SAVE_DIR=<dir>` | Keep saves and cache in `<dir>` instead. |
+| `RECOMP_MU=0`, `RECOMP_MU=1,2` | No memory unit, or memory units in those controllers (default: controller 1). |
 | `RECOMP_GPU=software` | Software renderer, the reference (`play_software.bat`). The default is Vulkan, with software as the fallback. |
 | `RECOMP_AUDIO=0` | No sound. |
 | `RECOMP_FB_SCALE=<n>`, `RECOMP_FB_FILTER=linear` | Initial window scale and filter. |
