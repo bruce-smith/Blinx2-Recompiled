@@ -336,6 +336,10 @@ Things to know:
     (about a minute), and Join waits for it.
   - **During the game:** your bag is on the memory unit in your controller,
     and in Versus you load your team from it.
+  - **After a match:** the game saves your bag when it comes back to the
+    team select screen. **End network game** waits for that (or for the
+    title screen), so it is safe to press at any time; **End now anyway**
+    skips the wait and loses that match's bag progress.
   - **At the end:** when the host presses **End network game**, every game
     stops at the same moment and the games are compared. If they all match,
     your bag comes back into your save with the battle's progress. The game

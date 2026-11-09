@@ -1151,6 +1151,39 @@ static LONG WINAPI fatal_filter(PEXCEPTION_POINTERS ep)
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+/* Network play: when the host's End network game may go (xboxrecomp
+ * xbox_NetplaySetEndGate). The game writes the Journey Bags, and the
+ * saved-game teams, 1-2 s after it comes back to Vs. team select from a
+ * match's results (P11's measurements). So ending is safe on the title and
+ * its menus (main mode 1), or on team select (mode 0x1A, Vs. screen
+ * [0xEB9E58] 2) once it has been there 5 s; during a match it waits. Guest
+ * state only, so every peer would decide alike. */
+static int blinx2_end_gate(uint32_t frame, char *why, size_t n)
+{
+    static uint32_t since;
+    static int on_select;
+    const uint8_t *mem = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t mode = *(const uint32_t *)(mem + 0xAE73F0) & 0x7F;
+    uint32_t screen = *(const uint32_t *)(mem + 0xEB9E58);
+    if (mode == 1)
+        return 1;
+    if (mode == 0x1A && screen == 2) {
+        if (!on_select) {
+            on_select = 1;
+            since = frame;
+        }
+        if (frame - since >= 300)
+            return 1;
+        snprintf(why, n, "Ending in a moment: the game is saving on the team select "
+                 "screen ...");
+        return 0;
+    }
+    on_select = 0;
+    snprintf(why, n, "Waiting for the Vs. team select screen (after a match the game "
+             "saves the Journey Bags there) or the title screen.");
+    return 0;
+}
+
 /* ── WinMain ───────────────────────────────────────────────── */
 
 static int s_no_rotate;               /* RECOMP_RUN_DIR: a child pass */
@@ -1577,6 +1610,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     xbox_NetplaySetBuild("blinx2 " BLINX2_GIT_SHA " xboxrecomp " XBOXRECOMP_GIT_SHA
                          " gen " RECOMP_GEN_HASH);
     xbox_NetplaySetGameDir(BLINX_2_DIR);    /* where the saves are, for Journey Bags */
+    xbox_NetplaySetEndGate(blinx2_end_gate);
     xbox_NetplayStart(BLINX_2_DIR);
     if (!load_xbe(BLINX_2_XBE_PATH, &xbe_data, &xbe_size)) {
         char msg[MAX_PATH + 256];
