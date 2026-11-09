@@ -198,6 +198,13 @@ renderer ran, and why.
 An XInput pad (e.g. an Xbox controller) works as well. LB/RB map to
 White/Black, and the triggers are analog.
 
+**Two or more players on one PC:** in the menu (Escape) > Controllers,
+each port gets the keyboard and/or a host pad. For example, port 1 =
+keyboard and port 2 = host pad 1, so one player uses the keyboard and the
+other the pad. Every port in use (keyboard on, or its host pad connected)
+is a controller in the game: port 1 is controller 1, port 2 is
+controller 2. A port you turn on while playing gets its controller at once.
+
 Window: it opens at 2x size and is resizable with the aspect ratio kept.
 F11 or Alt+Enter toggles full screen; F9 switches between nearest and linear
 filtering.
