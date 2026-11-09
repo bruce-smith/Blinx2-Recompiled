@@ -92,6 +92,7 @@ static void read_job(void)
     s_job = 0;
     if (!e || !*e)
         return;
+    s_exit = getenv("RECOMP_JOURNEYBAG_EXIT") != NULL;   /* before any failure */
     if (!strncmp(e, "create:", 7) && (e[7] == '1' || e[7] == '2')
             && (!e[8] || !strcmp(e + 8, ":overwrite"))) {
         s_job = 1;
@@ -103,12 +104,12 @@ static void read_job(void)
         s_job = JOB_VERIFY;
         s_slot = e[7] - '1';
     } else {
-        fprintf(stderr, "[JBAG] failed: RECOMP_JOURNEYBAG=%s (want create:1, "
-                "create:2, create:<slot>:overwrite, return or verify:<slot>)\n", e);
-        s_finished = 1;
+        char why[200];
+        snprintf(why, sizeof why, "RECOMP_JOURNEYBAG=%.60s (want create:1, create:2, "
+                 "create:<slot>:overwrite, return or verify:<slot>)", e);
+        finish(0, why);               /* exits 5 with RECOMP_JOURNEYBAG_EXIT */
         return;
     }
-    s_exit = getenv("RECOMP_JOURNEYBAG_EXIT") != NULL;
     fprintf(stderr, "[JBAG] %s%s: driving Vs. Mode > Prepare for Battle\n",
             s_job == JOB_CREATE ? "create from home save " :
             s_job == JOB_VERIFY ? "verify home save " : "return to the home save",
