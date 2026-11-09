@@ -37,7 +37,22 @@
  *                                              a network game each peer drives
  *                                              only its own player;
  *                                              RECOMP_JB_VS_TRACE=1 logs
- *                                              every press
+ *                                              every press.
+ *                                              RECOMP_JB_VS_SETS=<n> (default
+ *                                              1): Number of Battles on the
+ *                                              rules screen (1 set = 2 min).
+ *                                              RECOMP_JB_VS_FIGHT=1: in the
+ *                                              match both players walk to each
+ *                                              other (player 2 to player 1's
+ *                                              nearest member, around walls)
+ *                                              and the CPU teammates fight:
+ *                                              the bag's Time Sweepers gold
+ *                                              went 0 -> 100 (and the saved
+ *                                              game's +100). A button list
+ *                                              instead of 1 ("x", "b+rt")
+ *                                              also presses those; "probe"
+ *                                              vacuums junk (RT) and tries
+ *                                              each button (diagnostic)
  *   RECOMP_JOURNEYBAG_EXIT=1                   exit when finished:
  *                                              0 done, 5 failed
  *

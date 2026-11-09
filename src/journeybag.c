@@ -31,6 +31,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <time.h>
+#include <math.h>
 #include <sys/stat.h>
 #if defined(_WIN32)
 #include <io.h>                       /* _findfirst */
@@ -520,7 +521,9 @@ static void press(uint8_t *st, int key)
  * Nobody scores, so rounds tie and end on time. */
 #define VS_PLAYER(p)  (0x00EB9ECCu + (uint32_t)(p) * 0xB8u)
 #define VS_SCREEN     0x00EB9E58u
-enum { V_NONE, V_A, V_B, V_START, V_LUP, V_LDOWN, V_UP, V_DOWN };
+#define VS_RULES_CURSOR 0x00EB9E88u   /* rules screen: 0 Proceed to Match .. 4 Number of Battles */
+#define VS_SETS       0x00EB9E9Cu     /* Number of Battles: sets - 1 */
+enum { V_NONE, V_A, V_B, V_START, V_LUP, V_LDOWN, V_UP, V_DOWN, V_LLEFT, V_LRIGHT };
 /* The vs driver runs in the pad filter (usb_gamepad_set_filter): it sees
  * each pad's report at the USB poll rate, or once a frame for this machine's
  * own player in a network game. So its presses are timed by the guest's
@@ -547,6 +550,8 @@ static void vs_press(uint8_t *s, int key)
     case V_DOWN:  s[0] |= 0x02; break;
     case V_LUP:   s[12] = 0xFF; s[13] = 0x7F; break;    /* left stick Y +32767 */
     case V_LDOWN: s[12] = 0x01; s[13] = 0x80; break;    /* -32767 */
+    case V_LRIGHT: s[10] = 0xFF; s[11] = 0x7F; break;   /* left stick X */
+    case V_LLEFT:  s[10] = 0x01; s[11] = 0x80; break;
     default: break;
     }
 }
@@ -663,8 +668,27 @@ static int vs_decide(int p)
         }
         if (scr == 0)                 /* both join, then player 1 starts */
             return p == 0 ? ((s_vs_ms / 700) & 1 ? V_START : V_A) : V_A;
-        if (scr == 1)
-            return p == 0 ? V_A : V_NONE;   /* rules: Proceed to Match */
+        if (scr == 1) {               /* rules: Number of Battles, Proceed to Match */
+            static int stop = -1;     /* RECOMP_JB_VS_STOP=rules: stay (exploring) */
+            static uint32_t want;     /* RECOMP_JB_VS_SETS (1): [VS_SETS] = sets - 1 */
+            uint32_t cur = M32(VS_RULES_CURSOR), val = M32(VS_SETS);
+            if (stop < 0) {
+                const char *e = getenv("RECOMP_JB_VS_SETS");
+                int n = e ? atoi(e) : 1;
+                stop = getenv("RECOMP_JB_VS_STOP") != NULL;
+                want = n > 1 ? (uint32_t)(n - 1) : 0u;
+            }
+            if (p != 0 || stop)
+                return V_NONE;
+            if (val != want) {        /* cursor 4 = Number of Battles */
+                if (cur != 4)
+                    return cur < 4 ? V_LDOWN : V_LUP;
+                return val > want ? V_LLEFT : V_LRIGHT;
+            }
+            if (cur != 0)             /* 0 = Proceed to Match */
+                return V_LUP;
+            return V_A;
+        }
         if (scr != 2 || ph == 5)
             return V_NONE;
         if (ph == 1)
@@ -703,13 +727,208 @@ static int vs_decide(int p)
 static uint32_t vs_snap(int p)
 {
     uint32_t h = M32(G_MODE), i;
-    static const uint32_t at[] = { TITLE, TITLE + 0x10, VS_SCREEN };
-    for (i = 0; i < 3; i++)
+    static const uint32_t at[] = { TITLE, TITLE + 0x10, VS_SCREEN, VS_RULES_CURSOR, VS_SETS };
+    for (i = 0; i < 5; i++)
         h = h * 31u + M32(at[i]);
     static const uint32_t pl[] = { 0x00, 0x08, 0x20, 0x28 };  /* phase, sub, cursor, card */
     for (i = 0; i < 4; i++)
         h = h * 31u + M32(VS_PLAYER(p) + pl[i]);
     return h;
+}
+
+/* RECOMP_JB_VS_FIGHT=<buttons> (e.g. "x", "b+rt"): during the match player 2
+ * (or player 1 with RECOMP_JB_VS_SWAP) walks to the nearest member of the
+ * other team that still has HP and holds those buttons 400 ms of every
+ * 1000 ms; the other player stands. All from guest state: actors at
+ * 0xCD2440 + i*0x30C (player p's team is actors 4p..4p+3; +0x6C word HP,
+ * +0xEC/+0xF4 float x/z), player p's camera [0x4B2718 + p*4] (+0x10 yaw;
+ * the stick's up is (-sin yaw, cos yaw) in x/z, its right (cos yaw, sin yaw)). */
+#define VS_ACTOR(i)   (0x00CD2440u + (uint32_t)(i) * 0x30Cu)
+#define VS_CAMERAS    0x004B2718u
+static float vs_f32(uint32_t va)
+{
+    uint32_t v = M32(va);
+    float f;
+    memcpy(&f, &v, sizeof f);
+    return f;
+}
+
+#define VS_PICKUPS    0x00B22E68u     /* 256 objects of 0x6C: +2 type, +0x14 position */
+
+/* The stick toward world direction (dx, dz) for player p's camera. */
+static void vs_stick_to(int p, float dx, float dz, uint8_t *s18)
+{
+    uint32_t cam = M32(VS_CAMERAS + (uint32_t)p * 4u);
+    float yaw, len = sqrtf(dx * dx + dz * dz), up, right;
+    int16_t sx, sy;
+    if (!cam || len < 1e-3f)
+        return;
+    yaw = vs_f32(cam + 0x10);
+    dx /= len;
+    dz /= len;
+    up = -sinf(yaw) * dx + cosf(yaw) * dz;
+    right = cosf(yaw) * dx + sinf(yaw) * dz;
+    sx = (int16_t)(right * 32767.0f);
+    sy = (int16_t)(up * 32767.0f);
+    s18[10] = (uint8_t)sx; s18[11] = (uint8_t)((uint16_t)sx >> 8);
+    s18[12] = (uint8_t)sy; s18[13] = (uint8_t)((uint16_t)sy >> 8);
+}
+
+static void vs_fight(int p, uint8_t *s18)
+{
+    static const char *const names[8] = { "a", "b", "x", "y", "black", "white", "lt", "rt" };
+    static int fighter = -2, probe, detour_sign = 1;
+    static uint8_t buttons;           /* bit n = analog byte s18[2 + n] */
+    static uint32_t last_log, last_check, detour_until;
+    static float last_x, last_z;
+    static uint8_t skip[256];         /* junk that would not come */
+    static int near_junk = -1, last_target = -1, detours;
+    static uint32_t near_since, target_since;
+    uint32_t m = M32(G_MODE), tgt_va = 0;
+    float mx, my, mz, best = 1e30f, tx = 0, tz = 0, dx, dz, dist;
+    int i, me = 4 * p, other = 4 * (1 - p), target = -1, held = -1;
+    uint32_t ammo;
+    if (fighter == -2) {
+        const char *e = getenv("RECOMP_JB_VS_FIGHT");
+        fighter = -1;
+        if (e) {
+            fighter = getenv("RECOMP_JB_VS_SWAP") ? 0 : 1;
+            probe = !strcmp(e, "probe");
+            for (i = 0; i < 8 && !probe; i++) {
+                const char *f = strstr(e, names[i]);
+                size_t n = strlen(names[i]);
+                while (f && ((f != e && f[-1] != '+') || (f[n] && f[n] != '+')))
+                    f = strstr(f + 1, names[i]);
+                if (f)
+                    buttons |= (uint8_t)(1u << i);
+            }
+        }
+    }
+    if (fighter < 0 || !s_vs_matched || (m & 0x7Fu) != 0x0A || !(m & 0x80u))
+        return;
+    if (p != fighter) {               /* the other player walks to the fighter */
+        float ox = vs_f32(VS_ACTOR(4 * fighter) + 0xEC) - vs_f32(VS_ACTOR(me) + 0xEC);
+        float oz = vs_f32(VS_ACTOR(4 * fighter) + 0xF4) - vs_f32(VS_ACTOR(me) + 0xF4);
+        if (ox * ox + oz * oz > 40.0f * 40.0f)
+            vs_stick_to(p, ox, oz, s18);
+        return;
+    }
+    my = vs_f32(VS_ACTOR(me) + 0xF0);
+    mx = vs_f32(VS_ACTOR(me) + 0xEC);
+    mz = vs_f32(VS_ACTOR(me) + 0xF4);
+    ammo = (M32(VS_ACTOR(me) + 0x44) >> 16) & 0xFF;     /* +0x46: junk loaded */
+    if (probe && !ammo) {             /* the nearest junk (pickup types 1-0x23) */
+        for (i = 0; i < 256; i++) {
+            uint32_t o = VS_PICKUPS + (uint32_t)i * 0x6Cu;
+            uint32_t t = (M32(o) >> 16) & 0xFF;
+            float x, z, d;
+            if (t < 1 || t > 0x23 || skip[i] || (M32(o + 4) & 0xFF) != 0xFF ||
+                    (M32(o + 0xC) >> 24) != 1)
+                continue;                 /* +4 0xFF and +0xF 1: lying there */
+            x = vs_f32(o + 0x14);
+            z = vs_f32(o + 0x1C);
+            d = vs_f32(o + 0x18) - my;    /* height counts 4x: ledges */
+            d = (x - mx) * (x - mx) + (z - mz) * (z - mz) + 16.0f * d * d;
+            if (d < best) {
+                best = d;
+                tx = x;
+                tz = z;
+                target = i;
+                tgt_va = o;
+            }
+        }
+    } else {
+        for (i = other; i < other + 4; i++) {
+            float x = vs_f32(VS_ACTOR(i) + 0xEC), z = vs_f32(VS_ACTOR(i) + 0xF4);
+            float d = (x - mx) * (x - mx) + (z - mz) * (z - mz);
+            if ((int16_t)(M32(VS_ACTOR(i) + 0x6C) & 0xFFFF) > 0 && d < best) {
+                best = d;
+                tx = x;
+                tz = z;
+                target = i;
+            }
+        }
+    }
+    if (target < 0)
+        return;
+    if (target != last_target) {
+        last_target = target;
+        target_since = s_vs_ms;
+        detours = 0;
+    } else if (tgt_va && (detours > 4 || s_vs_ms - target_since > 15000u)) {
+        skip[target] = 1;             /* junk out of reach: the next one */
+        last_target = -1;
+    }
+    dist = sqrtf((tx - mx) * (tx - mx) + (tz - mz) * (tz - mz));
+    dx = tx - mx;
+    dz = tz - mz;
+    /* Stuck (under 8 units in 700 ms while far from the target): go sideways
+     * for 1.2 s, alternating sides, with a jump. */
+    if (s_vs_ms - last_check >= 700u) {
+        float moved = sqrtf((mx - last_x) * (mx - last_x) + (mz - last_z) * (mz - last_z));
+        if (moved < 8.0f && dist > 30.0f && s_vs_ms >= detour_until) {
+            detour_until = s_vs_ms + 1200u;
+            detour_sign = -detour_sign;
+            detours++;
+        }
+        last_check = s_vs_ms;
+        last_x = mx;
+        last_z = mz;
+    }
+    if (s_vs_ms < detour_until) {
+        float rx = -dz * (float)detour_sign, rz = dx * (float)detour_sign;
+        dx = rx;
+        dz = rz;
+        if (detour_until - s_vs_ms > 1000u)
+            s18[2] = 0xFF;            /* A: jump */
+    }
+    vs_stick_to(p, dx, dz, s18);
+    if (probe && !ammo && dist < 15.0f) {   /* at the junk: face it, barely moving */
+        int16_t sx = (int16_t)(s18[10] | (s18[11] << 8)), sy = (int16_t)(s18[12] | (s18[13] << 8));
+        sx /= 4;
+        sy /= 4;
+        s18[10] = (uint8_t)sx; s18[11] = (uint8_t)((uint16_t)sx >> 8);
+        s18[12] = (uint8_t)sy; s18[13] = (uint8_t)((uint16_t)sy >> 8);
+    }
+    if (probe && !ammo) {
+        if (dist < 40.0f) {
+            s18[2 + 7] = 0xFF;        /* RT: vacuum */
+            if (near_junk != target) {
+                near_junk = target;
+                near_since = s_vs_ms;
+            } else if (s_vs_ms - near_since > 6000u) {
+                skip[target] = 1;     /* 6 s and still there: another one */
+                near_junk = -1;
+            }
+        }
+    } else if (probe) {               /* loaded: tap each button in turn */
+        held = 1 + (int)((s_vs_ms / 2000u) % 7u);       /* b x y black white lt rt */
+        if (s_vs_ms % 2000u < 200u)
+            s18[2 + held] = 0xFF;
+        else
+            held = -1;
+    } else if (s_vs_ms % 1000u < 400u) {
+        for (i = 0; i < 8; i++)
+            if (buttons & (1u << i))
+                s18[2 + i] = 0xFF;
+    }
+    if (s_vs_ms - last_log >= (probe ? 250u : 1000u)) {
+        int hp_other = 0, hp_me = 0;
+        char ab[3 * 16 + 1];
+        last_log = s_vs_ms;
+        for (i = 0; i < 4; i++) {
+            hp_other += (int16_t)(M32(VS_ACTOR(other + i) + 0x6C) & 0xFFFF);
+            hp_me += (int16_t)(M32(VS_ACTOR(me + i) + 0x6C) & 0xFFFF);
+        }
+        for (i = 0; i < 16; i++)
+            snprintf(ab + 3 * i, 4, "%02X ", (M32(VS_ACTOR(me) + 0x40 + (uint32_t)(i & ~3)) >>
+                                               (8 * (i & 3))) & 0xFF);
+        fprintf(stderr, "[JBAG] vs fight ms %u: player %d at %.0f,%.0f -> %s %d at %.0f,%.0f "
+                "(%.0f away)%s; held %s; team HP %d vs %d; gold %u; +0x40: %s; target +0x5C %08X\n",
+                s_vs_ms, p + 1, mx, mz, probe ? "junk" : "actor", target, tx, tz, dist,
+                s_vs_ms < detour_until ? " detour" : "", held >= 0 ? names[held] : "-", hp_me, hp_other, M32(VS_ACTOR(me) + 0xDC) & 0xFFFF, ab,
+                tgt_va ? M32(tgt_va + 0x5C) : 0u);
+    }
 }
 
 /* The pad filter: pad's 18 report bytes, before the schedule, the input
@@ -735,6 +954,7 @@ static void vs_filter(int pad, uint8_t *s18)
         finish(0, why);
         return;
     }
+    vs_fight(p, s18);                 /* RECOMP_JB_VS_FIGHT: steering and fire */
     if (s_vs_hold_until[p]) {
         if (s_vs_ms < s_vs_hold_until[p] && vs_snap(p) == s_vs_snap[p]) {
             vs_press(s18, s_vs_key[p]);
