@@ -321,8 +321,29 @@ Things to know:
   (3 frames = 50 ms, enough for a LAN or a nearby VPN). Raise it if the game
   stutters; the slowest connection sets the pace for everyone.
 - **Saves:** the host's saves are sent to every player for that game. Each
-  player plays on a copy in `%LOCALAPPDATA%\xboxrecomp\netplay`; nobody's
-  own saves are touched.
+  player plays on a copy in `%LOCALAPPDATA%\xboxrecomp\netplay`.
+- **Your own team (Journey Bags):** this is the game's own way of bringing
+  your team to another Xbox, done for you.
+  - **Before you join:** when you choose Join, pick "Your team: Save 1 /
+    Save 2". The game packs a Journey Bag from that save in the background
+    (about a minute), and Join waits for it.
+  - **During the game:** your bag is on the memory unit in your controller,
+    and in Versus you load your team from it.
+  - **At the end:** when the host presses **End network game**, every game
+    stops at the same moment and the games are compared. If they all match,
+    your bag comes back into your save with the battle's progress. The game
+    returns it itself, on a copy first, and checks that the result loads.
+  - **What changes on your PC:** only then is your save replaced. The old one
+    is kept in `netplay\backups`, next to your saves. **Restore my save from
+    before the last network game** in the Network tab puts it back.
+  - **Any other ending** (a window closed, a desync, a player dropped): your
+    save stays exactly as it was. Every step is written to
+    `netplay_journeybag.log` next to the exe.
+  - "None" plays on the host's save, as before.
+- **The host's progress:** kept too. After a clean end, the game's progress
+  goes into the host's save, with the same backup, checks and Restore
+  button. **Keep my progress from network games** (on by default) turns
+  this off.
 - **Split screen:** the game draws a split screen, as on one Xbox. Menu >
   Graphics > View: **auto** enlarges your own part of it (two players:
   player 1 top, player 2 bottom; three or four: player 1 top-left, 2
@@ -354,6 +375,8 @@ Things to know:
 Without the menu: `RECOMP_NET=host:27350` or
 `RECOMP_NET=join:<host ip>:27350`, with `RECOMP_NET_PLAYERS=<2-4>`,
 `RECOMP_NET_DELAY=<frames>` and `RECOMP_NET_VK=1` (Vulkan display).
+A joiner's team: `RECOMP_NET_BAG=<save 1|2>` (pack the bag now) or `0`;
+not keeping the host's progress: `RECOMP_NET_KEEP_HOST=0`.
 
 ### Cheats
 

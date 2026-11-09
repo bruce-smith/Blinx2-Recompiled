@@ -1153,6 +1153,8 @@ static LONG WINAPI fatal_filter(PEXCEPTION_POINTERS ep)
 
 /* ── WinMain ───────────────────────────────────────────────── */
 
+static int s_no_rotate;               /* RECOMP_RUN_DIR: a child pass */
+
 /* <base>.log -> <base>.prev-<its last write time>.log, keeping the newest
  * `keep` of those. In the working directory, before anything opens the log. */
 static int cmp_str(const void *a, const void *b)
@@ -1339,6 +1341,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 #endif
     }
 
+    /* RECOMP_RUN_DIR=<dir>: run there instead, and rotate nothing. A network
+     * game's Journey Bag passes (xboxrecomp src/net/netbag.c) are headless
+     * children of a running game: their logs must not push out the player's. */
+    {
+        const char *rd = getenv("RECOMP_RUN_DIR");
+        if (rd && *rd) {
+#if defined(_WIN32)
+            SetCurrentDirectoryA(rd);
+#else
+            if (chdir(rd) != 0)
+                perror(rd);
+#endif
+            s_no_rotate = 1;
+        }
+    }
+
 #if defined(_WIN32)
     /* Restarted into a network game by the menu (RECOMP_NET_PARENT, the old
      * process's id): let it finish dying first. It still held
@@ -1358,9 +1376,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
     /* Keep the last runs' logs: a crash log used to be overwritten by the
      * next launch, before anyone had read it. */
-    rotate_rec(5);                    /* first: it reads the log's timestamp */
-    rotate_log("blinx2_recomp", 5);
-    rotate_log("xbox_kernel", 5);
+    if (!s_no_rotate) {
+        rotate_rec(5);                /* first: it reads the log's timestamp */
+        rotate_log("blinx2_recomp", 5);
+        rotate_log("xbox_kernel", 5);
+    }
 
     /* Launched by double-click there is no console and no redirection, so
      * stderr goes nowhere and a crash leaves no trace. Write it to
@@ -1556,6 +1576,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * settings (xboxrecomp src/net). */
     xbox_NetplaySetBuild("blinx2 " BLINX2_GIT_SHA " xboxrecomp " XBOXRECOMP_GIT_SHA
                          " gen " RECOMP_GEN_HASH);
+    xbox_NetplaySetGameDir(BLINX_2_DIR);    /* where the saves are, for Journey Bags */
     xbox_NetplayStart(BLINX_2_DIR);
     if (!load_xbe(BLINX_2_XBE_PATH, &xbe_data, &xbe_size)) {
         char msg[MAX_PATH + 256];
