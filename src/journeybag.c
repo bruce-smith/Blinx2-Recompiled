@@ -44,6 +44,9 @@
 #endif
 
 #include "journeybag.h"
+#include "netplay.h"                  /* xbox_NetplayActive/Player */
+#include "usb_gamepad.h"              /* usb_gamepad_set_filter */
+#include "xbox_memory_layout.h"       /* KeTickCount's guest address */
 
 extern ptrdiff_t g_xbox_mem_offset;
 int input_rec_mode(void);            /* recomp_manual.c: 2 = replaying */
@@ -65,7 +68,7 @@ enum { K_NONE, K_UP, K_DOWN, K_START, K_A, K_B };
 #define LIMIT_POLLS  (60 * 180)       /* about three minutes of polls */
 
 /* -1 unread, 0 none, 1 create, 2 return, 3 verify */
-enum { JOB_NONE, JOB_CREATE, JOB_RETURN, JOB_VERIFY };
+enum { JOB_NONE, JOB_CREATE, JOB_RETURN, JOB_VERIFY, JOB_VS };
 static int s_job = -1;
 static int s_slot;                    /* create/verify: home-save slot, 0-based */
 static int s_verify_settle;           /* verify: polls on the save list so far */
@@ -110,14 +113,21 @@ static void read_job(void)
         s_overwrite = e[8] != 0;
     } else if (!strcmp(e, "return")) {
         s_job = JOB_RETURN;
+    } else if (!strcmp(e, "vs")) {
+        s_job = JOB_VS;
     } else if (!strncmp(e, "verify:", 7) && (e[7] == '1' || e[7] == '2') && !e[8]) {
         s_job = JOB_VERIFY;
         s_slot = e[7] - '1';
     } else {
         char why[200];
         snprintf(why, sizeof why, "RECOMP_JOURNEYBAG=%.60s (want create:1, create:2, "
-                 "create:<slot>:overwrite, return or verify:<slot>)", e);
+                 "create:<slot>:overwrite, return, verify:<slot> or vs)", e);
         finish(0, why);               /* exits 5 with RECOMP_JOURNEYBAG_EXIT */
+        return;
+    }
+    if (s_job == JOB_VS) {
+        fprintf(stderr, "[JBAG] vs: player 1 saved game, player 2 Journey Bag on MU 2A, "
+                "default rules, then out to the title\n");
         return;
     }
     fprintf(stderr, "[JBAG] %s%s: driving Vs. Mode > Prepare for Battle\n",
@@ -166,14 +176,10 @@ static const char *save_root(void)
 /* The home-save folder names under <save dir>/UDATA/<title>, up to max;
  * returns how many. One portable directory walk for every caller. */
 #define MAX_SAVES 64
-static int save_folders(char names[][64], int max)
+/* The subfolder names of dir (up to max). */
+static int list_dirs(const char *dir, char names[][64], int max)
 {
-    char dir[600];
-    const char *root = save_root();
     int n = 0;
-    if (!root)
-        return 0;
-    snprintf(dir, sizeof dir, "%s" PATH_SEP TITLE_DIR, root);
 #if defined(_WIN32)
     {
         char pat[620];
@@ -207,6 +213,17 @@ static int save_folders(char names[][64], int max)
     }
 #endif
     return n;
+}
+
+/* The home save folders under the title's UDATA directory. */
+static int save_folders(char names[][64], int max)
+{
+    char dir[600];
+    const char *root = save_root();
+    if (!root)
+        return 0;
+    snprintf(dir, sizeof dir, "%s" PATH_SEP TITLE_DIR, root);
+    return list_dirs(dir, names, max);
 }
 
 static void data_path(char *path, size_t len, const char *folder)
@@ -481,12 +498,285 @@ static void press(uint8_t *st, int key)
     (*(uint32_t *)st)++;              /* a new packet: the state changed */
 }
 
+/* ── vs: one 2-player Vs. match, player 1 from a saved game, player 2 from
+ * the Journey Bag on MU 2A, default rules, played to its end, then out to
+ * the title: for checking what a battle writes to a bag.
+ *
+ * Vs state (memory dumps of a walk, 2026-11-09):
+ *   mode 0x1A (Vs menus); [0xEB9E58] screen: 0 join, 2 team selection,
+ *     1 rules (cursor starts on Proceed to Match), 4 into the match
+ *   player p's struct 0xEB9ECC + p*0xB8:
+ *     +0x00 0 picking a team, 1 team screen (cursor starts on Complete
+ *           Selection), 5 ready
+ *     +0x08 while picking: 1 select guest team (+0x20 cursor: 0 a preset
+ *           team, 1 load from saved game, 2 load from Journey Bag; starts
+ *           on 0), 2 save list, 4 memory-unit list (+0x28 the card; A is
+ *           accepted when the card's entry 0xDE0818 + card*0x78 has status
+ *           3 = holds a bag and +0x68 = 0 = not mounted, sub_00201BB0
+ *           0x20230B), 5 reading the bag, 6 the bag's team list
+ *   These menus move with the left stick, not the d-pad.
+ * In the match (any other mode) both press A now and then: NEXT ROUND on
+ * the between-round menu and the result screens; in battle A is harmless.
+ * Nobody scores, so rounds tie and end on time. */
+#define VS_PLAYER(p)  (0x00EB9ECCu + (uint32_t)(p) * 0xB8u)
+#define VS_SCREEN     0x00EB9E58u
+enum { V_NONE, V_A, V_B, V_START, V_LUP, V_LDOWN, V_UP, V_DOWN };
+/* The vs driver runs in the pad filter (usb_gamepad_set_filter): it sees
+ * each pad's report at the USB poll rate, or once a frame for this machine's
+ * own player in a network game. So its presses are timed by the guest's
+ * KeTickCount (ms; under a schedule it moves by recorded or virtual time,
+ * the same on every peer), and a press ends early once the player's menu
+ * state changes -- a held stick would otherwise repeat. */
+#define VS_TICK      (XBOX_KERNEL_DATA_BASE + KDATA_TICK_COUNT)
+#define VS_HOLD_MS   100u             /* a press: held at most this long */
+#define VS_GAP_MS    200u             /* then released this long */
+static int s_vs_key[2];
+static uint32_t s_vs_hold_until[2], s_vs_gap_until[2], s_vs_spam[2], s_vs_snap[2];
+static uint32_t s_vs_ms, s_vs_t0;       /* ms since the job started */
+static int s_vs_t0_set;
+static int s_vs_matched, s_vs_back;
+
+/* s: the 18 state bytes of a pad report (usb_gamepad.h). */
+static void vs_press(uint8_t *s, int key)
+{
+    switch (key) {
+    case V_A:     s[2] = 0xFF; break;
+    case V_B:     s[3] = 0xFF; break;
+    case V_START: s[0] |= 0x10; break;
+    case V_UP:    s[0] |= 0x01; break;
+    case V_DOWN:  s[0] |= 0x02; break;
+    case V_LUP:   s[12] = 0xFF; s[13] = 0x7F; break;    /* left stick Y +32767 */
+    case V_LDOWN: s[12] = 0x01; s[13] = 0x80; break;    /* -32767 */
+    default: break;
+    }
+}
+
+/* When was each save file last written, home saves and the bag on MU 2A. */
+static void vs_file_report(const char *when)
+{
+    static char names[MAX_SAVES][64];
+    char path[700];
+    struct stat st;
+    const char *root = save_root();
+    int n, i, u;
+    if (!root)
+        return;
+    n = save_folders(names, MAX_SAVES);
+    for (i = 0; i < n; i++) {
+        data_path(path, sizeof path, names[i]);
+        if (stat(path, &st) == 0)
+            fprintf(stderr, "[JBAG] vs %s: home save %s last written %ld\n", when,
+                    names[i], (long)st.st_mtime);
+    }
+    for (u = 0; u < 8; u++) {         /* bags: <save>/MU/<n>/UDATA/<title>/<folder> */
+        char dir[620];
+        snprintf(dir, sizeof dir, "%s" PATH_SEP "MU" PATH_SEP "%d" PATH_SEP TITLE_DIR, root, u);
+        n = list_dirs(dir, names, MAX_SAVES);
+        for (i = 0; i < n; i++) {
+            snprintf(path, sizeof path, "%s" PATH_SEP "%s" PATH_SEP "blinx2data.bin", dir,
+                     names[i]);
+            if (stat(path, &st) == 0)
+                fprintf(stderr, "[JBAG] vs %s: MU %d save %s last written %ld\n", when, u,
+                        names[i], (long)st.st_mtime);
+        }
+    }
+}
+
+/* The next press for player p (0/1), or V_NONE. */
+static int vs_decide(int p)
+{
+    uint32_t m = M32(G_MODE), mode = m & 0x7Fu;
+    if (mode == 1 && (m & 0x80u)) {
+        uint32_t ts = M32(TITLE), cur = M32(TITLE + 0x10);
+        if (s_vs_matched) {
+            if (p == 0) {
+                vs_file_report("back at the title");
+                finish(1, "vs match played to its end; back at the title");
+            }
+            return V_NONE;
+        }
+        if (p != 0)
+            return V_NONE;
+        if (ts == 0)
+            return V_START;
+        if (ts != 2)
+            return V_NONE;
+        switch (cur) {
+        case 0: return V_DOWN;        /* Story Mode -> Vs. Mode */
+        case 1: return V_A;
+        case 6: return V_A;           /* Vs. Play */
+        case 7: return V_UP;
+        default: return V_B;
+        }
+    }
+    if (mode == 0x1D && (m & 0x80u))  /* Prepare for Battle by a slip: back out */
+        return p == 0 ? V_B : V_NONE;
+    if (mode == 0x1A && (m & 0x80u)) {
+        uint32_t scr = M32(VS_SCREEN);
+        uint32_t ph = M32(VS_PLAYER(p)), sub = M32(VS_PLAYER(p) + 8);
+        if (s_vs_matched) {
+            /* After the match the game is back on team selection. Backing
+             * out from there warns "you and your friends' game will not be
+             * saved", so the save comes from going on. To see which step
+             * writes what: wait there RECOMP_JB_VS_WAIT ms (default 5000),
+             * then player 1 completes the selection, then player 2;
+             * the file times are reported after each step, and at the rules
+             * screen the job ends. */
+            static uint32_t wait = 0xFFFFFFFFu, t0;
+            static int step;
+            uint32_t ph0 = M32(VS_PLAYER(0));
+            if (wait == 0xFFFFFFFFu) {
+                const char *e = getenv("RECOMP_JB_VS_WAIT");
+                wait = e ? (uint32_t)strtoul(e, NULL, 0) : 5000u;
+            }
+            if (!s_vs_back) {
+                s_vs_back = 1;
+                t0 = s_vs_ms;
+                vs_file_report("match over, team selection");
+            }
+            if (scr == 1) {
+                if (p == 0) {
+                    vs_file_report("selection completed again (rules screen)");
+                    finish(1, "vs match played to its end and the selection completed "
+                              "again; see the file times");
+                }
+                return V_NONE;
+            }
+            if (scr != 2 || s_vs_ms - t0 < wait)
+                return V_NONE;
+            if (step == 0 && p == 0) {
+                step = 1;
+                vs_file_report("waited on team selection");
+            }
+            if (step == 1 && ph0 != 1) {
+                step = 2;
+                t0 = s_vs_ms;      /* player 1 done; wait again before player 2 */
+                return V_NONE;
+            }
+            if (step == 2 && p == 0 && s_vs_ms - t0 >= wait) {
+                step = 3;
+                vs_file_report("player 1 completed the selection");
+            }
+            if (ph == 1 && ((p == 0 && step == 1) || (p == 1 && step == 3)))
+                return V_A;           /* Complete Selection */
+            return V_NONE;
+        }
+        if (scr == 0)                 /* both join, then player 1 starts */
+            return p == 0 ? ((s_vs_ms / 700) & 1 ? V_START : V_A) : V_A;
+        if (scr == 1)
+            return p == 0 ? V_A : V_NONE;   /* rules: Proceed to Match */
+        if (scr != 2 || ph == 5)
+            return V_NONE;
+        if (ph == 1)
+            return V_A;               /* Complete Selection */
+        if (ph != 0)
+            return V_NONE;
+        switch (sub) {
+        case 1: {                     /* select guest team: 0 a preset team, */
+            /* 1 load from saved game (player 1), 2 load from Journey Bag
+             * (player 2); the cursor starts on 0 */
+            static int swap = -1;     /* RECOMP_JB_VS_SWAP=1: player 1 takes the bag */
+            uint32_t want, cur = M32(VS_PLAYER(p) + 0x20);
+            if (swap < 0)
+                swap = getenv("RECOMP_JB_VS_SWAP") != NULL;
+            want = (p != 0) != (swap != 0) ? 2u : 1u;
+            if (cur != want)
+                return cur < want ? V_LDOWN : V_LUP;
+            return V_A;
+        }
+        case 2: case 3: case 4: case 6:   /* save list, card list (4), bag teams */
+            return V_A;
+        default:
+            return V_NONE;
+        }
+    }
+    if (mode == 0x0A && (m & 0x80u))
+        s_vs_matched = 1;             /* the match itself (mode 10, as stages) */
+    if (s_vs_matched && s_vs_ms - s_vs_spam[p] >= 2000u) {   /* the match and its results */
+        s_vs_spam[p] = s_vs_ms;                             /* screens: A now and then */
+        return V_A;
+    }
+    return V_NONE;
+}
+
+/* What a press can change for player p: a hash of the menu state. */
+static uint32_t vs_snap(int p)
+{
+    uint32_t h = M32(G_MODE), i;
+    static const uint32_t at[] = { TITLE, TITLE + 0x10, VS_SCREEN };
+    for (i = 0; i < 3; i++)
+        h = h * 31u + M32(at[i]);
+    static const uint32_t pl[] = { 0x00, 0x08, 0x20, 0x28 };  /* phase, sub, cursor, card */
+    for (i = 0; i < 4; i++)
+        h = h * 31u + M32(VS_PLAYER(p) + pl[i]);
+    return h;
+}
+
+/* The pad filter: pad's 18 report bytes, before the schedule, the input
+ * recording and a network game see them. Decides only from guest state. */
+static void vs_filter(int pad, uint8_t *s18)
+{
+    uint32_t c;
+    int p = xbox_NetplayActive() ? xbox_NetplayPlayer() : pad;
+    if (s_finished || input_rec_mode() == 2)
+        return;
+    c = M32(VS_TICK);                 /* the guest clock */
+    if (!s_vs_t0_set) {
+        s_vs_t0_set = 1;
+        s_vs_t0 = c;
+    }
+    s_vs_ms = c - s_vs_t0;
+    if (p < 0 || p > 1)
+        return;
+    if (s_vs_ms > 40u * 60u * 1000u) {
+        char why[120];
+        snprintf(why, sizeof why, "vs: no end after 40 minutes (mode 0x%X, screen %u)",
+                 M32(G_MODE), M32(VS_SCREEN));
+        finish(0, why);
+        return;
+    }
+    if (s_vs_hold_until[p]) {
+        if (s_vs_ms < s_vs_hold_until[p] && vs_snap(p) == s_vs_snap[p]) {
+            vs_press(s18, s_vs_key[p]);
+            return;
+        }
+        s_vs_hold_until[p] = 0;
+        s_vs_gap_until[p] = s_vs_ms + VS_GAP_MS;
+    }
+    if (s_vs_ms < s_vs_gap_until[p])
+        return;
+    s_vs_key[p] = vs_decide(p);
+    if (s_vs_key[p] != V_NONE && !s_finished) {
+        static int trace = -1;        /* RECOMP_JB_VS_TRACE=1: every press */
+        if (trace < 0)
+            trace = getenv("RECOMP_JB_VS_TRACE") != NULL;
+        if (trace)
+            fprintf(stderr, "[JBAG] vs press p%d key %d ms %u mode 0x%X title %u/%u "
+                    "screen %u phase %u sub %u cursor %u\n", p, s_vs_key[p], s_vs_ms,
+                    M32(G_MODE), M32(TITLE), M32(TITLE + 0x10), M32(VS_SCREEN),
+                    M32(VS_PLAYER(p)), M32(VS_PLAYER(p) + 8), M32(VS_PLAYER(p) + 0x20));
+        s_vs_hold_until[p] = s_vs_ms + VS_HOLD_MS;
+        s_vs_snap[p] = vs_snap(p);
+        vs_press(s18, s_vs_key[p]);
+    }
+}
+
+void journeybag_init(void)
+{
+    if (s_job < 0)
+        read_job();
+    if (s_job == JOB_VS)
+        usb_gamepad_set_filter(vs_filter);
+}
+
 void journeybag_pre_poll(uint32_t handle, uint8_t *st)
 {
     if (s_job < 0)
         read_job();
     if (!s_job || s_finished || !st || input_rec_mode() == 2)
         return;
+    if (s_job == JOB_VS)
+        return;                       /* the pad filter drives it (vs_filter) */
     if (!s_handle)
         s_handle = handle;
     if (handle != s_handle)

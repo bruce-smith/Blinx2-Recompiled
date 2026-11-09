@@ -59,6 +59,7 @@
 #include "xbox_ui.h"        /* settings file, in-game menu */
 #include "netplay.h"        /* lockstep network play */
 #include "cheats.h"         /* the menu's Cheats tab */
+#include "journeybag.h"     /* RECOMP_JOURNEYBAG automation */
 #include "build_sha.h"      /* for the menu's About text (cmake/git_sha.cmake) */
 #ifndef BLINX2_GIT_SHA
 #define BLINX2_GIT_SHA "unknown"
@@ -1665,6 +1666,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * the layout. Nothing called it before, which left RECOMP_USB and
      * RECOMP_PAD_PRESS inert. Still opt-in: it does nothing unless
      * RECOMP_USB is set. */
+    journeybag_init();                  /* RECOMP_JOURNEYBAG=vs: its pad filter */
     xbox_OhciInit();
 
     /* Bring up the emulated APU.

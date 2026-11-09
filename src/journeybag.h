@@ -18,6 +18,26 @@
  *                                              the slot is there, equal to
  *                                              its file, main record signed,
  *                                              then backs out
+ *   RECOMP_JOURNEYBAG=vs                       a real 2-player Vs. game: player
+ *                                              1 a saved game, player 2 Load
+ *                                              team from Journey Bag > MU 2A
+ *                                              (RECOMP_JB_VS_SWAP=1: the other
+ *                                              way round), default rules, the
+ *                                              match played out; back on team
+ *                                              select the game itself saves
+ *                                              the bag and the saved game
+ *                                              (1-2 s after it gets there).
+ *                                              It waits RECOMP_JB_VS_WAIT ms
+ *                                              (5000), then each player
+ *                                              completes the selection, and
+ *                                              "[JBAG] vs ..." lines give the
+ *                                              files' times at each step.
+ *                                              Driven from the pad filter
+ *                                              (usb_gamepad_set_filter), so in
+ *                                              a network game each peer drives
+ *                                              only its own player;
+ *                                              RECOMP_JB_VS_TRACE=1 logs
+ *                                              every press
  *   RECOMP_JOURNEYBAG_EXIT=1                   exit when finished:
  *                                              0 done, 5 failed
  *
@@ -38,6 +58,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* At start-up, before the first pad report: reads RECOMP_JOURNEYBAG and,
+ * for vs, installs the pad filter (usb_gamepad_set_filter) that drives it. */
+void journeybag_init(void);
 
 /* Called from the XInputGetState override with the controller handle and
  * the XINPUT_STATE the title gets, before the input recording sees it. */
