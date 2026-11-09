@@ -8,7 +8,16 @@
  *                                              fails if a bag is already
  *                                              on the unit, unless
  *                     create:<slot>:overwrite  (which orphans that bag)
- *   RECOMP_JOURNEYBAG=return                   the bag on MU 1A back home
+ *   RECOMP_JOURNEYBAG=return                   the bag on MU 1A back home,
+ *                                              then a "[JBAG] summary:" line
+ *                                              (team, gold, items) from the
+ *                                              save it went into
+ *   RECOMP_JOURNEYBAG=verify:<slot 1|2>        writes nothing: opens Create's
+ *                                              home-save list (the game reads
+ *                                              and checks every save), checks
+ *                                              the slot is there, equal to
+ *                                              its file, main record signed,
+ *                                              then backs out
  *   RECOMP_JOURNEYBAG_EXIT=1                   exit when finished:
  *                                              0 done, 5 failed
  *
