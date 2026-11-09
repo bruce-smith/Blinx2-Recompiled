@@ -31,7 +31,17 @@
 #include <string.h>
 #include <stddef.h>
 #include <time.h>
-#include <io.h>
+#include <sys/stat.h>
+#if defined(_WIN32)
+#include <io.h>                       /* _findfirst */
+#define PATH_SEP "\\"
+#else
+#include <dirent.h>
+#define PATH_SEP "/"
+#ifndef __stdcall
+#define __stdcall
+#endif
+#endif
 
 #include "journeybag.h"
 
@@ -129,7 +139,7 @@ static void read_job(void)
 #define REC_SIZE   0x84C8u
 #define REC_DATA   0x84B4u
 #define FILE_SIZE  0x14000u
-#define TITLE_DIR  "UDATA\\4d530065"
+#define TITLE_DIR  "UDATA" PATH_SEP "4d530065"
 
 void __stdcall xbox_XcHMAC(const unsigned char *key, unsigned long key_len,
                            const unsigned char *d1, unsigned long d1_len,
@@ -153,40 +163,81 @@ static const char *save_root(void)
     return d && *d ? d : getenv("RECOMP_GAME_DIR");
 }
 
-/* Reads every home save's blinx2data.bin under <save dir>\UDATA\<title>.
+/* The home-save folder names under <save dir>/UDATA/<title>, up to max;
+ * returns how many. One portable directory walk for every caller. */
+#define MAX_SAVES 64
+static int save_folders(char names[][64], int max)
+{
+    char dir[600];
+    const char *root = save_root();
+    int n = 0;
+    if (!root)
+        return 0;
+    snprintf(dir, sizeof dir, "%s" PATH_SEP TITLE_DIR, root);
+#if defined(_WIN32)
+    {
+        char pat[620];
+        struct _finddata_t fd;
+        intptr_t h;
+        snprintf(pat, sizeof pat, "%s\\*", dir);
+        if ((h = _findfirst(pat, &fd)) == -1)
+            return 0;
+        do {
+            if ((fd.attrib & _A_SUBDIR) && fd.name[0] != '.' && n < max)
+                snprintf(names[n++], 64, "%s", fd.name);
+        } while (_findnext(h, &fd) == 0);
+        _findclose(h);
+    }
+#else
+    {
+        DIR *d = opendir(dir);
+        struct dirent *e;
+        if (!d)
+            return 0;
+        while ((e = readdir(d)) != NULL && n < max) {
+            char path[700];
+            struct stat st;
+            if (e->d_name[0] == '.')
+                continue;
+            snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+            if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+                snprintf(names[n++], 64, "%s", e->d_name);
+        }
+        closedir(d);
+    }
+#endif
+    return n;
+}
+
+static void data_path(char *path, size_t len, const char *folder)
+{
+    snprintf(path, len, "%s" PATH_SEP TITLE_DIR PATH_SEP "%s" PATH_SEP "blinx2data.bin",
+             save_root(), folder);
+}
+
+/* Reads every home save's blinx2data.bin under <save dir>/UDATA/<title>.
  * pick(): 1 to stop at this one. Returns 1 if one was picked; its folder
  * name and contents are left in name/buf. */
 static int each_save(int (*pick)(const uint8_t *buf, void *ctx), void *ctx,
                      uint8_t *buf, char *name, size_t name_len)
 {
-    char pat[600], path[700];
-    struct _finddata_t fd;
-    intptr_t h;
-    const char *root = save_root();
-    int found = 0;
-    if (!root)
-        return 0;
-    snprintf(pat, sizeof pat, "%s\\" TITLE_DIR "\\*", root);
-    h = _findfirst(pat, &fd);
-    if (h == -1)
-        return 0;
-    do {
+    static char names[MAX_SAVES][64];
+    char path[700];
+    int n = save_folders(names, MAX_SAVES), i;
+    for (i = 0; i < n; i++) {
         FILE *f;
-        size_t n;
-        if (!(fd.attrib & _A_SUBDIR) || fd.name[0] == '.')
-            continue;
-        snprintf(path, sizeof path, "%s\\" TITLE_DIR "\\%s\\blinx2data.bin", root, fd.name);
+        size_t got;
+        data_path(path, sizeof path, names[i]);
         if (!(f = fopen(path, "rb")))
             continue;
-        n = fread(buf, 1, FILE_SIZE, f);
+        got = fread(buf, 1, FILE_SIZE, f);
         fclose(f);
-        if (n == FILE_SIZE && pick(buf, ctx)) {
-            snprintf(name, name_len, "%s", fd.name);
-            found = 1;
+        if (got == FILE_SIZE && pick(buf, ctx)) {
+            snprintf(name, name_len, "%s", names[i]);
+            return 1;
         }
-    } while (!found && _findnext(h, &fd) == 0);
-    _findclose(h);
-    return found;
+    }
+    return 0;
 }
 
 static int pick_same(const uint8_t *buf, void *ctx)
@@ -245,37 +296,26 @@ static int verify_check(void)
 static void return_summary(void)
 {
     static uint8_t buf[FILE_SIZE];
-    char pat[600], path[700], best[260] = "";
-    struct _finddata_t fd;
-    intptr_t h;
+    static char names[MAX_SAVES][64];
+    char path[700], best[64] = "";
     time_t newest = 0;
-    const char *root = save_root();
     FILE *f;
-    int team, items[2] = { 0, 0 };
+    int team, items[2] = { 0, 0 }, n, i;
     static const struct { uint16_t at, n; } cats[] = {
         { 0x74, 43 }, { 0xB4, 22 }, { 0xF4, 23 }, { 0x114, 38 } };
-    if (!root)
-        return;
-    snprintf(pat, sizeof pat, "%s\\" TITLE_DIR "\\*", root);
-    if ((h = _findfirst(pat, &fd)) == -1)
-        return;
-    do {                              /* by the file's time: a folder's does not move */
-        struct _finddata_t ff;
-        intptr_t hf;
-        if (!(fd.attrib & _A_SUBDIR) || fd.name[0] == '.')
-            continue;
-        snprintf(path, sizeof path, "%s\\" TITLE_DIR "\\%s\\blinx2data.bin", root, fd.name);
-        if ((hf = _findfirst(path, &ff)) == -1)
-            continue;
-        if (ff.time_write >= newest) {
-            newest = ff.time_write;
-            snprintf(best, sizeof best, "%s", fd.name);
+    n = save_folders(names, MAX_SAVES);
+    for (i = 0; i < n; i++) {         /* by the file's time: a folder's does not move */
+        struct stat st;
+        data_path(path, sizeof path, names[i]);
+        if (stat(path, &st) == 0 && st.st_mtime >= newest) {
+            newest = st.st_mtime;
+            snprintf(best, sizeof best, "%s", names[i]);
         }
-        _findclose(hf);
-    } while (_findnext(h, &fd) == 0);
-    _findclose(h);
-    snprintf(path, sizeof path, "%s\\" TITLE_DIR "\\%s\\blinx2data.bin", root, best);
-    if (!best[0] || !(f = fopen(path, "rb")))
+    }
+    if (!best[0])
+        return;
+    data_path(path, sizeof path, best);
+    if (!(f = fopen(path, "rb")))
         return;
     if (fread(buf, 1, FILE_SIZE, f) == FILE_SIZE) {
         for (team = 0; team < 2; team++) {
