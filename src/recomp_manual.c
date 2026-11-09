@@ -342,6 +342,7 @@ extern void sub_00368457_gen(void);
  * where it is handled, below). Version 1 files (no events) still replay, but
  * drift after the first load or movie. */
 #include "cheats.h"
+#include "journeybag.h"
 #include "build_sha.h"                 /* written on every build (cmake/git_sha.cmake) */
 #ifndef BLINX2_GIT_SHA
 #define BLINX2_GIT_SHA "unknown"
@@ -1132,8 +1133,10 @@ void sub_00368457(void)
     uint32_t state  = *(const uint32_t *)(mem + g_esp + 8);
 
     sub_00368457_gen();
-    if (state)
+    if (state) {
+        journeybag_pre_poll(handle, (uint8_t *)mem + state);
         cheats_pre_poll((uint8_t *)mem + state);
+    }
     input_rec_poll(mem, handle, state);
     cheats_on_poll(s_in_poll);
 
